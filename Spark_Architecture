@@ -1,0 +1,182 @@
+Q. what is diff between worker node and container?
+-->
+Worker Node
+ ├── Container 1 → Executor 1
+ ├── Container 2 → Executor 2
+ └── Container 3 → Executor 3
+*Spark executor runs inside a container which is allocated on a worker node.
+* A worker node is a physical or virtual machine in the cluster, while a container is a logical allocation of CPU and memory on a worker node used to run Spark executors.
+
+
+Q. What is py4j connection. 
+-->
+Python Process (PySpark)
+        |
+        |  Py4J (Socket / Gateway)
+        |
+JVM Process (Spark Driver / Executor)
+* One Py4J gateway per driver
+* Executors also use Py4J when Python UDFs are involved.
+* Py4J is a communication gateway that allows PySpark’s Python process to interact with Spark’s JVM-based execution engine by sending commands and receiving results over a socket connection.
+
+
+Q. How we identify, are we using python worker in spark or not?
+-->
+Spark uses a Python worker whenever Python code such as RDD operations, Python UDFs, or Pandas UDFs need to be executed on executors; this can be identified through code usage, Spark UI executor details, or executor logs showing PythonRunner activity.
+
+
+👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉
+
+Q. How we can calculate no of drivers and executor for our data for spark submit?
+-->
+There is always exactly ONE driver per Spark application
+So the real question is:
+Q. How do we calculate number of executors, cores, and memory?
+We don’t calculate drivers since Spark has one driver per application. Executors are calculated based on available cluster resources by reserving memory and cores for the OS, choosing optimal cores per executor (usually 3–5), and dividing remaining resources to determine executors per node and total executors.
+
+
+👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉
+
+Q. Spark driver Vs spark executor?
+-->
+What does Spark Driver do?
+The Driver runs on the client or cluster and is responsible for:
+* Creates SparkContext / SparkSession
+* Converts code into DAG
+* Breaks DAG into stages
+* Schedules tasks to executors
+* Tracks execution & failures
+* Collects results (if needed)
+- Driver never processes data directly (except very small actions like collect())
+
+What does Spark Executor do?
+Executors are JVM processes launched on worker nodes that:
+* Run tasks
+* Process data partitions
+* Perform transformations
+* Cache data (if persisted)
+* Send results & metrics back to driver
+- Executors live for the entire application (unless dynamic allocation is used)
+
+** The Spark driver is the central coordinator that builds the execution plan, schedules tasks, and monitors execution, 
+while Spark executors are distributed JVM processes on worker nodes that execute tasks on data partitions and return results to the driver.
+
+👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉
+Q. Explain Spark excution plan?
+--> When u pass analyase s phase means u hv valid code.
+then they apply optimization loagical plan to our code & create optimized logical plan.
+Tht plan taken by spark engine, it will create one or more physical plan and apply cost base optimization.
+spark engine will create multiple physical plan, calculate each physical plan cost. and select plan with at least cost.
+they use different algorithm to create more than one pythical plan like breadcast join, shuffler hash join.
+then thy apply cost to each plan adn chose best one. then plan will go to code generation.
+The engine will generate java byte code for RDDs.
+that all about spark sql engine.
+
+*-->
+- A Spark Execution Plan is the step-by-step plan Spark creates to convert your code into distributed execution on executors.
+
+User Code
+   |
+   ↓ 
+Logical Plan [Spark check syntax of your DataFrame / SQL code]
+   |
+   | (Catalyst Optimizer) 
+   ↓ 
+Optimized Logical Plan [Spark applies rule-based optimizations.Predicate pushdown,Reordering filters]
+   |
+   ↓ 
+Physical Plan
+   |            [
+   |            Now Spark decides HOW to execute:
+   |            * Which join strategy?
+   |                    -Broadcast
+   |                    -Sort-merge
+   |            * Where to shuffle
+   |            * How many tasks ]
+   |
+   ↓ 
+DAG → Stages → Tasks 
+[DAG - Spark converts the physical plan into a DAG of transformations.]
+[stage - Spark splits DAG into stages based on shuffle boundaries.]
+[Tasks -
+        * Each stage is divided into tasks
+        * One task per partition
+        * Tasks are sent to executors     ]
+   |
+   ↓ 
+Executors
+
+
+** Spark execution plan is the multi-step process where Spark converts user code into logical and physical plans, 
+optimizes them using the Catalyst optimizer, builds a DAG, splits it into stages and tasks, 
+and finally executes them in parallel on executors.
+
+👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉
+
+Q. How the data moving from one stage to another stage?
+-->
+short [Data moves between stages through a SHUFFLE. No shuffle = no new stage.]
+
+
+
+
+
+👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉
+
+Q. Difference between stage and task?
+
+👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉
+
+Q. Difference between cluster manager and spark driver?
+
+👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉
+
+Q. What is mager difference between spark and hadoop mapreduce?
+
+👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉
+
+Q. Explain DAG?
+
+👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉
+
+
+Q. Explain Spark executor memory allocation and use of each parameter in short?
+-->
+spark.memory.offHeap.enabled  --> false (not enabled by default) 
+spark.memory.offHeap.size     --> 0 (no default value; irrelevant unless enabled) 
+spark.executor.pyspark.memory --> Not defined (no default in docs)
+spark.executor.memory         --> 1g 
+spark.executor.memoryOverhead --> max(384 MB, 10% of executor.memory)
+
+👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉
+
+
+Q. What will happen if we give more than 5 executor.core?
+
+👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉
+
+Q. What is Adaptive Query Execution(AQE) in short?
+
+
+👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉
+
+Q. Explain Dynamically coalescing shuffle partitions.
+--> combine andn coalesce the small partitions.
+we need to give,
+Enable AQE
+max num of shuffle partitions,
+min num of shuffle partitions
+each partition size (64 MB default)
+Enable cealsce partition (for to make combine/small partitions)
+
+
+👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉
+
+Q. Explain Dynamically switching join strategies.
+
+👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉
+
+Q. Explain Dynamically Optimizing skew joins
+
+👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉
+
