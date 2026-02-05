@@ -116,26 +116,128 @@ and finally executes them in parallel on executors.
 Q. How the data moving from one stage to another stage?
 -->
 short [Data moves between stages through a SHUFFLE. No shuffle = no new stage.]
+*That’s why shuffle is expensive:
+-  Disk I/O
+-  Network transfer
+-  Serialization / deserialization
 
+Q.How to IDENTIFY stage-to-stage movement?
+-->
+Spark UI
+-- Look for Shuffle Read / Shuffle Write
+-- New stage = shuffle boundary
+Execution plan
+-  Look for Exchange operator
 
-
-
-
+** Data moves from one stage to another in Spark through a shuffle operation, 
+where intermediate data is serialized and written to disk by tasks in the previous stage and 
+then fetched over the network by tasks in the next stage.
 👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉
 
 Q. Difference between stage and task?
+-->
+* A stage is a logical group of work, a task is the actual unit of execution.
+* Stages are created by the Driver.
+* 100 partitions → 100 tasks
+
+Job
+ └── Stage
+      └── Tasks (one per partition)
+
+* stage Runs on Driver (planning)
+* stage Runs on Executors
+
+** A stage is a logical group of transformations separated by shuffle boundaries, 
+while a task is the smallest unit of execution that processes a single data partition 
+and runs in parallel on executors.
+
+👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉
+
+Q.Task vs thread vs core
+-->
+* Task = work
+* Thread = how work runs
+* Core = how much work can run in parallel
+   executor-cores = 4
+   → Executor can run 4 tasks simultaneously
+
+* Partitions → Tasks → Threads → Cores
+* Executor (4 cores)
+   ├── Thread 1 → Task 1
+   ├── Thread 2 → Task 2
+   ├── Thread 3 → Task 3
+   └── Thread 4 → Task 4
+
+Q. Why this matters in tuning (real-world)
+* Too few tasks → cores idle
+* Too many tasks → scheduling overhead
+* Too many cores per executor → GC pressure
+* Thats why:
+- 3-5 cores per executor is recommended
+
+** In Spark, a task is the smallest unit of work that processes one partition, 
+a thread is the JVM execution unit that runs the task, 
+and a core is a CPU resource that determines how many tasks can run in parallel on an executor.
 
 👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉
 
 Q. Difference between cluster manager and spark driver?
+-->
+* Cluster Manager gives resources. --> YARN, Spark standalon, Mesos, Kubernetes
+* Spark Driver uses those resources to run the job. --> Spark application
+
+spark-submit
+   ↓
+Spark Driver starts
+   ↓
+Driver asks Cluster Manager for resources
+   ↓
+Cluster Manager allocates containers
+   ↓
+Executors start on worker nodes
+   ↓
+Driver schedules tasks on executors
+
+** The cluster manager is responsible for allocating and managing cluster resources, 
+while the Spark driver is responsible for building the execution plan, scheduling tasks, 
+and coordinating the execution of a Spark application using those resources.
+
 
 👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉
 
 Q. What is mager difference between spark and hadoop mapreduce?
+-->
+* MapReduce is disk-based batch processing.
+* Spark is in-memory, DAG-based distributed processing.
+* Spark can run on HDFS
+* Spark often replaces MapReduce, not Hadoop ecosystem
 
+** The major difference is that Hadoop MapReduce is a disk-based batch processing framework with a fixed Map and Reduce model, 
+while Spark uses an in-memory, DAG-based execution engine that supports faster, iterative(repeted task), and interactive data processing.
 👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉
 
-Q. Explain DAG?
+Q. Explain DAG (Directed Acyclic Graph) ?
+-->
+* In Spark, a DAG is a logical execution plan that represents all transformations and actions in your job and their dependencies.
+
+* Spark uses DAG to:
+- Combine multiple operations into one job
+- Avoid unnecessary disk I/O
+- Optimize execution
+- This is why Spark is faster.
+
+Read → Map → Filter → Shuffle → Reduce
+DAG
+ └── Stage
+      └── Tasks
+
+Common interview mistakes ❌
+- DAG executes tasks.
+- DAG is created per stage.
+- DAG is physical execution.
+
+** In Spark, a DAG is a directed acyclic graph that represents the logical execution plan of transformations and actions, 
+capturing dependencies between operations and enabling Spark to optimize, schedule stages, and execute tasks efficiently.
 
 👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉
 
@@ -148,15 +250,60 @@ spark.executor.pyspark.memory --> Not defined (no default in docs)
 spark.executor.memory         --> 1g 
 spark.executor.memoryOverhead --> max(384 MB, 10% of executor.memory)
 
+-->
+* Total executor memory = JVM heap + overhead
+
+* --executor-memory 8G # Main JVM heap memory for executor [data processing,cache/persist, shiffle, UDF execution]
+* spark.executor.memoryOverhead # Off-heap + non-JVM memory
+* spark.memory.fraction
+   - Fraction of heap for execution + storage
+   - Default: 0.6
+* spark.memory.storageFraction
+   - Storage share inside memory fraction
+   - Default: 0.5
+
+* Memory layout -
+  Executor JVM Heap
+   ├── Execution + Storage (60%)
+   │     ├── Storage (30%)    # Joins,Aggregations,Shuffles
+   │     └── Execution (30%)  # Cached / persisted data
+   └── User / Reserved Memory (40%)
+
+
+
+** Spark executor memory consists of JVM heap defined by spark.executor.memory for execution and storage, 
+plus off-heap memory defined by spark.executor.memoryOverhead, with memory fractions controlling 
+how heap is shared between execution and cached data.
+
 👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉
 
 
 Q. What will happen if we give more than 5 executor.core?
+-->
+* Spark will still run, but performance usually degrades.
+* Each task runs in one thread
+* If it crashes → many tasks fail at once
+
+* More GC → Less task execution → Slower job
+* GC - Garbage Collection is a JVM mechanism that reclaims unused memory objects, 
+      and in Spark excessive GC overhead occurs 
+      when executors spend more time cleaning memory than executing tasks, 
+      it will couse performance degradation.
+
+** Using more than 5 executor cores increases JVM garbage collection overhead, 
+thread contention, and memory pressure, which usually degrades Spark performance; 
+hence, 3-5 cores per executor is considered optimal.
 
 👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉
 
 Q. What is Adaptive Query Execution(AQE) in short?
+-->
+It does -
+* Changes join strategy on the fly (e.g., Sort-Merge → Broadcast)
+* Handles data skew by splitting skewed partitions
+* Coalesces shuffle partitions to reduce small tasks
 
+** AQE dynamically adjusts Spark’s physical execution plan at runtime based on real data statistics to improve performance.
 
 👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉
 
