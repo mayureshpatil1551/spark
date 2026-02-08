@@ -1,3 +1,5 @@
+👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉
+
 Q. what is diff between worker node and container?
 -->
 Worker Node
@@ -5,8 +7,9 @@ Worker Node
  ├── Container 2 → Executor 2
  └── Container 3 → Executor 3
 *Spark executor runs inside a container which is allocated on a worker node.
-* A worker node is a physical or virtual machine in the cluster, while a container is a logical allocation of CPU and memory on a worker node used to run Spark executors.
+* A worker node is a physical or virtual machine in the cluster, while a container is a Isolated virtual runtime env It comes with some CPU & memory allocation.
 
+👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉
 
 Q. What is py4j connection. 
 -->
@@ -15,14 +18,20 @@ Python Process (PySpark)
         |  Py4J (Socket / Gateway)
         |
 JVM Process (Spark Driver / Executor)
+
 * One Py4J gateway per driver
 * Executors also use Py4J when Python UDFs are involved.
 * Py4J is a communication gateway that allows PySpark’s Python process to interact with Spark’s JVM-based execution engine by sending commands and receiving results over a socket connection.
 
+** The python code is design to start java mai () method internally. So, my pyspark appln start JVM appln. 
+After that python wapper will call java wrapper usingPy4J connection.
+Py4J is allow pyspark appln to to call Java appln & that's how pyspark work. It will start JVM appln and call spark API's in the JVM.
+👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉
 
 Q. How we identify, are we using python worker in spark or not?
 -->
-Spark uses a Python worker whenever Python code such as RDD operations, Python UDFs, or Pandas UDFs need to be executed on executors; this can be identified through code usage, Spark UI executor details, or executor logs showing PythonRunner activity.
+Spark uses a Python worker whenever Python code such as RDD operations, Python UDFs, or Pandas UDFs need to be executed on executors; 
+this can be identified through code usage, Spark UI executor details, or executor logs showing Python Runner activity.
 
 
 👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉
@@ -41,7 +50,9 @@ Q. Spark driver Vs spark executor?
 -->
 What does Spark Driver do?
 The Driver runs on the client or cluster and is responsible for:
-* Creates SparkContext / SparkSession
+* Creates Spark Context / Spark Session
+	- Spark Context: Low-level entry point that manages cluster resources and executes RDD-based operations.
+	- Spark Session: Unified, high-level entry point (Spark 2+) that wraps SparkContext and provides APIs for SQL, DataFrames, and datasets.
 * Converts code into DAG
 * Breaks DAG into stages
 * Schedules tasks to executors
@@ -62,15 +73,15 @@ Executors are JVM processes launched on worker nodes that:
 while Spark executors are distributed JVM processes on worker nodes that execute tasks on data partitions and return results to the driver.
 
 👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉
-Q. Explain Spark excution plan?
---> When u pass analyase s phase means u hv valid code.
-then they apply optimization loagical plan to our code & create optimized logical plan.
-Tht plan taken by spark engine, it will create one or more physical plan and apply cost base optimization.
-spark engine will create multiple physical plan, calculate each physical plan cost. and select plan with at least cost.
-they use different algorithm to create more than one pythical plan like breadcast join, shuffler hash join.
-then thy apply cost to each plan adn chose best one. then plan will go to code generation.
+Q. Explain Spark execution plan?
+--> When u pass analyses phase means u hv valid code.
+then they apply optimization logical plan to our code & create optimized logical plan.
+That plan taken by spark engine, it will create one or more physical plan and apply cost base optimization 
+and select plan with at least cost.
+they use different algorithm to create more than one physical plan like broadcast join, shuffler hash join.
+then they apply cost to each plan and chose best one. then plan will go to code generation.
 The engine will generate java byte code for RDDs.
-that all about spark sql engine.
+that all about spark SQL engine. 
 
 *-->
 - A Spark Execution Plan is the step-by-step plan Spark creates to convert your code into distributed execution on executors.
@@ -78,11 +89,11 @@ that all about spark sql engine.
 User Code
    |
    ↓ 
-Logical Plan [Spark check syntax of your DataFrame / SQL code]
+Logical Plan [Spark check syntax of your Data Frame / SQL code]
    |
    | (Catalyst Optimizer) 
    ↓ 
-Optimized Logical Plan [Spark applies rule-based optimizations.Predicate pushdown,Reordering filters]
+Optimized Logical Plan [Spark applies rule-based optimizations. Predicate pushdown, Reordering filters]
    |
    ↓ 
 Physical Plan
@@ -117,6 +128,7 @@ Q. How the data moving from one stage to another stage?
 -->
 short [Data moves between stages through a SHUFFLE. No shuffle = no new stage.]
 *That’s why shuffle is expensive:
+-  Shuffle is costly due to disk spills, cross-node network movement, and CPU overhead from serialization.
 -  Disk I/O
 -  Network transfer
 -  Serialization / deserialization
@@ -136,7 +148,7 @@ then fetched over the network by tasks in the next stage.
 
 Q. Difference between stage and task?
 -->
-* A stage is a logical group of work, a task is the actual unit of execution.
+* A stage is a logical group of task, a task is the actual unit of execution.
 * Stages are created by the Driver.
 * 100 partitions → 100 tasks
 
@@ -144,8 +156,8 @@ Job
  └── Stage
       └── Tasks (one per partition)
 
-* stage Runs on Driver (planning)
-* stage Runs on Executors
+* stage is create o driver.
+* task Runs on Executors
 
 ** A stage is a logical group of transformations separated by shuffle boundaries, 
 while a task is the smallest unit of execution that processes a single data partition 
@@ -153,7 +165,7 @@ and runs in parallel on executors.
 
 👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉
 
-Q.Task vs thread vs core
+Q. Task vs thread vs core
 -->
 * Task = work
 * Thread = how work runs
@@ -171,19 +183,22 @@ Q.Task vs thread vs core
 Q. Why this matters in tuning (real-world)
 * Too few tasks → cores idle
 * Too many tasks → scheduling overhead
-* Too many cores per executor → GC pressure
-* Thats why:
+* Too many cores per executor → GC[garbage collection] pressure
+* That's why:
 - 3-5 cores per executor is recommended
+
+* Executor runs on a Worker Node.
 
 ** In Spark, a task is the smallest unit of work that processes one partition, 
 a thread is the JVM execution unit that runs the task, 
 and a core is a CPU resource that determines how many tasks can run in parallel on an executor.
 
+
 👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉
 
 Q. Difference between cluster manager and spark driver?
 -->
-* Cluster Manager gives resources. --> YARN, Spark standalon, Mesos, Kubernetes
+* Cluster Manager gives resources. --> YARN, Spark standalone, Mesos, Kubernetes
 * Spark Driver uses those resources to run the job. --> Spark application
 
 spark-submit
@@ -205,7 +220,7 @@ and coordinating the execution of a Spark application using those resources.
 
 👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉
 
-Q. What is mager difference between spark and hadoop mapreduce?
+Q. What is meager difference between spark and Hadoop MapReduce?
 -->
 * MapReduce is disk-based batch processing.
 * Spark is in-memory, DAG-based distributed processing.
@@ -213,7 +228,8 @@ Q. What is mager difference between spark and hadoop mapreduce?
 * Spark often replaces MapReduce, not Hadoop ecosystem
 
 ** The major difference is that Hadoop MapReduce is a disk-based batch processing framework with a fixed Map and Reduce model, 
-while Spark uses an in-memory, DAG-based execution engine that supports faster, iterative(repeted task), and interactive data processing.
+while Spark uses an in-memory, DAG-based execution engine that supports faster, iterative(repeated task), and interactive data processing.
+
 👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉
 
 Q. Explain DAG (Directed Acyclic Graph) ?
@@ -255,7 +271,7 @@ spark.executor.memoryOverhead --> max(384 MB, 10% of executor.memory)
 
 * --executor-memory 8G # Main JVM heap memory for executor [data processing,cache/persist, shiffle, UDF execution]
 * spark.executor.memoryOverhead # Off-heap + non-JVM memory
-* spark.memory.fraction
+* spark.memory.fraction [How much want memory want to run DF operations
    - Fraction of heap for execution + storage
    - Default: 0.6
 * spark.memory.storageFraction
@@ -306,7 +322,6 @@ It does -
 ** AQE dynamically adjusts Spark’s physical execution plan at runtime based on real data statistics to improve performance.
 
 👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉
-
 Q. Explain Dynamically coalescing shuffle partitions.
 --> combine andn coalesce the small partitions.
 we need to give,
@@ -316,14 +331,367 @@ min num of shuffle partitions
 each partition size (64 MB default)
 Enable cealsce partition (for to make combine/small partitions)
 
+-->
+* Spark automatically reduces the number of shuffle partitions at runtime when it detects that shuffle data is smaller than expected.
+* default on in spark 3+
+  >> spark.sql.adaptive.enabled = true
+  >> spark.sql.adaptive.coalescePartitions.enabled = true
+  >> spark.sql.adaptive.advisoryPartitionSizeInBytes = 64MB
+
+** Dynamically coalescing shuffle partitions is an AQE optimization where Spark reduces the number of shuffle partitions at runtime by merging small partitions 
+based on actual shuffle data size, thereby minimizing task overhead and 
+improving performance.
 
 👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉
 
 Q. Explain Dynamically switching join strategies.
+-->
+* Spark changes the join algorithm at runtime based on the actual size of the join inputs, instead of sticking to the join chosen during query planning.
 
+  >> spark.sql.adaptive.enabled = true
+  >> spark.sql.adaptive.localShuffleReader.enabled = true
+  >> spark.sql.autoBroadcastJoinThreshold = 10MB
+
+** Dynamically switching join strategies is an AQE feature where Spark changes 
+the join algorithm at runtime—such as switching from a sort-merge join to 
+a broadcast join—based on actual data sizes to reduce shuffle and improve performance.
 👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉
 
 Q. Explain Dynamically Optimizing skew joins
+-->
+Spark detects skewed join partitions at runtime and splits them into smaller sub-partitions 
+so, work is balanced across executors.
+
+  >> spark.sql.adaptive.enabled = true
+  >> spark.sql.adaptive.skewJoin.enabled = true
+  >> spark.sql.adaptive.skewJoin.skewedPartitionThresholdInBytes
+  >> spark.sql.adaptive.skewJoin.skewedPartitionFactor
+
+** Dynamically optimizing skew joins is an AQE feature where Spark detects skewed join partitions at runtime and 
+splits them into smaller partitions so that join work is evenly distributed across executors, reducing straggler tasks.
+
+** When AQE optimizes skew joins, Spark splits the skewed partition into multiple smaller tasks, 
+which can be scheduled on different executors to balance the workload and avoid stragglers.
+👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉
+
+video done
+👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉
+
+Q. What is Dynamic Partition Pruning?
+Q. Why do we need Dynamic Partition Pruning?
+-->
+spark.sql.optimizer.dynamicPartitionPruning.enable = true # [Enabled by default in Spark 3+ , Works best with AQE]
+
+
+pruning - removing unnecessary part ( cut karane)
+** Pruning means avoiding unnecessary data reads by skipping files, partitions, or rows that are not needed for a query.
+** Dynamic Partition Pruning is a runtime optimization where Spark prunes partitions dynamically based on values produced during query execution.
+** Dynamic Partition Pruning is needed when partition filter values are not known at query planning time, so Spark can avoid scanning unnecessary partitions.
 
 👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉
 
+Q. Explain caching in Apache Spark?
+-->
+Caching stores intermediate data (RDD/DataFrame) in memory so Spark can reuse it across multiple actions without recomputing from the source.
+Why caching is needed -
+	- Spark recomputes lineage by default
+	- Repeated actions = repeated computation
+	- Caching avoids recomputation → faster jobs
+How it works - 
+	- Call cache() or persist()
+	- Data is cached after the first action
+	- Next actions reuse cached data
+
+Storage levels (quick)
+	- MEMORY_ONLY (default)
+	- MEMORY_AND_DISK
+	- DISK_ONLY
+	- Serialized versions (_SER)
+
+When to use cache - 
+	- Reused DataFrames
+	- Iterative algorithms
+	- Multiple actions on same data
+	- Expensive transformations
+
+When NOT to use -
+	- One-time use data
+	- Very large datasets that don’t fit memory
+
+** Caching in Spark stores reusable datasets in memory to avoid re-computation and improve performance across multiple actions.
+
+
+Q How do you cache DF in executor stg pool?
+-->
+By calling cache() or persist(), Spark stores the DataFrame in the executor’s storage memory pool (not on the driver).
+
+What is the executor storage pool?
+	Each executor JVM has memory split into:
+	Execution memory → shuffles, joins, aggregations
+	Storage memory → cached / persisted data
+	(Managed by Unified Memory Manager)
+Cached DataFrames live in the storage region of executors.
+
+
+How caching actually works (step-by-step)
+
+>> df.cache()
+>> # or
+>> df.persist(StorageLevel.MEMORY_ONLY)
+
+
+cache() marks the DF as cacheable (lazy)
+2. First action triggers computation
+3. Each executor:
+	- Computes its partition
+	- Stores that partition in its local storage pool
+4. Metadata about cached blocks is tracked by the driver
+5. Future actions:
+	- Executors read from local cache
+	- No re-computation
+
+
+Important points (interview gold)
+Cached data is:
+	Distributed across executors
+	Stored partition-wise
+Driver never stores cached data
+If storage memory is full:
+	Blocks may be evicted (LRU)
+	Or spilled to disk (based on storage level)
+
+Example with storage level
+>> from pyspark import StorageLevel
+>> df.persist(StorageLevel.MEMORY_AND_DISK)
+
+Memory full → spill to disk
+Still stored at executor level
+
+
+How to verify in Spark UI :-
+Spark UI → Storage tab
+Shows:
+	Cached RDD/DF
+	Memory used per executor
+	Storage level
+
+** A Data Frame is cached in Spark by calling cache() or persist(), which stores its partitions in the executor’s 
+storage memory pool after the first action, 
+allowing reuse without re-computation.
+
+When you want to access large DF multiple times across spark actions, you should consider caching or database.
+But make sure, you know your memory requirements & configure your memory accordingly.
+
+If you are not reusing your DF frequently or too small, do not cache them.
+
+👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉
+
+Q. Explain Repartition and Coalesce?
+-->
+Default Repartition size is 200.
+
+Repartition :-
+	- Changes the number of partitions using a full shuffle
+	- Can increase or decrease partitions
+	- Redistributes data evenly
+ 	- Expensive due to shuffle
+>> df.repartition(200)
+>> df.repartition(200, "key")
+
+Coalesce :-
+	- Reduces partitions by merging existing partitions
+	- Avoids full shuffle
+	- Faster but may create uneven partitions
+	- Can only decrease partitions
+>> df.coalesce(50)
+
+partitionBy :-
+ 	- Used only while writing data
+ 	- A write option, not a transformation
+ 	- Physically partitions data on disk
+ 	- Creates directory structure
+ 	- Causes shuffle during write
+>> df.write.partitionBy("country").parquet(path)
+
+
+**
+Repartition - reshuffles data to change partitions evenly. In-memory redistribution
+Coalesce - reduces partitions by merging them without a full shuffle.
+partitionBy - physically organizes data into directory partitions on disk during write for faster reads. On-disk partitioning
+
+>> df.repartition(200).write.partitionBy("dt").parquet(path)
+
+👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉
+
+Q. When should you use repartition?
+
+repartition -
+	Use when Need better parallelism
+	Before joins or aggregations
+	Fixing data skew
+
+coalesce-
+	Use when After filtering data
+	Use when Before writing output
+	Use when Reducing small files
+
+
+
+👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉
+
+
+Q. Give me real project example for repartition and coalesce?
+-->
+In real projects, repartition is used before joins or aggregations to improve parallelism and balance data,
+while coalesce is used before writing data to reduce the number of output files and avoid small file problems.
+
+⚠️ Common Production Mistakes ❌
+Using repartition before write (slow)
+Using coalesce before join (skew risk)
+Hardcoding partition numbers without cluster awareness
+
+🧠 Pro Tip (Senior-level)
+Let AQE handle repartition when possible
+Use manual repartition only when:
+	Skew exists
+	Parallelism is clearly insufficient
+
+-- 20 GB data
+sales_df = spark.read.parquet("/raw/sales")
+cust_df  = spark.read.parquet("/dim/customer")
+sales_df = sales_df.repartition(400, "customer_id")
+result = (
+    sales_df
+    .join(cust_df, "customer_id")
+    .groupBy("region")
+    .sum("amount")
+)
+
+-- 2/3 GB data
+final_df = transformed_df.coalesce(20)
+final_df.write.mode("overwrite").parquet("/curated/sales_summary")
+
+
+👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉
+Q. What are DataFrame hints in Spark?
+-->
+	Partition Hints
+	Join Hints
+
+Q. What is a broadcast hint and when do you use it?
+-->
+A broadcast hint forces Spark to broadcast the smaller table to all executors to avoid shuffle, 
+and is used when the dimension table is small and reused in joins.
+
+Q. Does Spark always follow DataFrame hints?
+-->
+No. Spark may ignore or override hints if they cause memory issues or if AQE finds a more efficient plan.
+
+Q. How do you verify whether a hint was applied?
+-->
+Check the Spark UI → SQL tab → Physical Plan and look for join types like BroadcastHashJoin.
+
+Q. How do DataFrame hints interact with AQE?
+-->
+AQE can change or override hinted join strategies at runtime based on actual data statistics.
+
+
+** DataFrame hints guide Spark’s optimizer but are not guarantees, and AQE may override them based on runtime metrics.
+
+>> df.hint("broadcast")
+>> df1.join(df2.hint("broadcast"), "id")
+
+👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉
+
+Explain Broadcast variable
+-->
+broadcast variables are read-only and shared across all tasks.
+data is sent once and reused by all tasks on that executor.
+Cached in the executor’s memory (worker node hosts the executor).
+Broadcast variable is serialized and sent only when first accessed by a task.
+
+
+-->
+A broadcast variable is a read-only shared variable that Spark distributes once to all executors, 
+so every task can access it locally without sending it repeatedly.
+
+How it works (simple flow)
+	Driver creates broadcast variable
+	Spark sends it once to each executor
+	Tasks read it locally (read-only)
+>> bc_map = spark.sparkContext.broadcast(my_dict)
+
+Used in -Lookup tables, Reference data, Small dimension data, Map-side joins
+
+----------------------------------------------------
+| Broadcast Variable      | Broadcast Join         |
+| ----------------------- | ---------------------- |
+| Manual                  | Automatic / hint-based |
+| Read-only data          | Join optimization      |
+| Used in transformations | Used in joins          |
+----------------------------------------------------
+
+** A broadcast variable is a read-only shared variable that Spark sends once to all executors so tasks can 
+access common data locally without repeated network transfer.
+
+👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉
+
+Q. Spark Accumulators 
+-->
+Accumulators are variables that executors can only add values to, and Spark collects the total on the driver, 
+   mainly to count or track things for monitoring and debugging.
+We use an accumulator to count how many records failed validation while processing data in Spark.
+Example in words:
+	Each executor increases the counter when it finds a bad record, and the driver gets the final count.
+
+👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉
+
+Q. Speculative execution ?
+-->
+Speculative execution is a Spark feature that runs duplicate copies of slow tasks on other executors to avoid stragglers and reduce job runtime.
+Eg.
+	Task 5 running very slow ❌
+	Spark runs Task 5 again on another executor ✅
+
+>> spark.speculation = true
+
+👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉
+
+Q. Explain Spark Dynamic Resource Allocation.
+-->
+Dynamic Resource Allocation lets Spark automatically add or remove executors at runtime based on workload, instead of using a fixed number of executors.
+
+>> spark.dynamicAllocation.enabled = true
+>> spark.dynamicAllocation.minExecutors = 2
+>> spark.dynamicAllocation.maxExecutors = 50
+>> spark.dynamicAllocation.initialExecutors = 5
+
+
+👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉
+
+Q. What are Spark schedulers?
+-->
+Spark schedulers decide which job, stage, and task runs first and how cluster resources are shared between jobs.
+
+DAG Scheduler - Planner
+Breaks jobs into stages based on shuffle dependencies.
+
+Task Scheduler - Traffic controller
+Assigns tasks to executors and manages execution.
+
+FIFO vs FAIR
+FIFO runs jobs sequentially, FAIR shares resources across jobs.
+
+FIFO -
+Default job schedular
+first job gets highest priority
+Consumes as must as needed
+Next job gets leftover resumes.
+
+FAIR Schedular -
+spark.scheduler.mode = FAIR
+Round robin slot allocation
+   means assign shares cluster resources across multiple jobs, multiple jobs run together so no job waits too long.
+
+
+👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉👉
