@@ -25,7 +25,35 @@ insert into transactions values
 ,(8,5,'2020-02-20',150)
 ;
 
-answer -->
+SQL -->
+
+%sql
+select month(t1.order_date) as monthh,count(distinct t2.cust_id) as dd
+from transactions t1
+left join transactions t2 on t1.cust_id = t2.cust_id
+and datediff(month,t2.order_date,t1.order_date) = 1
+group by month(t1.order_date)
 
 
+Pyspark -->
+
+%python
+from pyspark.sql import functions as F
+
+df1 = spark.table("transactions")
+df2 = df1
+# Alias your DataFrames
+t1 = df1.alias("t1")
+t2 = df2.alias("t2")
+final_df = (
+    t1.join(
+        t2,
+        (t1.cust_id == t2.cust_id) &
+        (F.months_between(t1.order_date, t2.order_date) == 1),
+        'left'
+    )
+    .groupBy(F.month(t1.order_date).alias("monthh"))
+    .agg(F.countDistinct(t2.cust_id).alias("count_custs"))
+)
+final_df.show()
 
