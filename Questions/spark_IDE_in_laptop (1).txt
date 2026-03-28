@@ -1,0 +1,53 @@
+1. Install JDK -->
+1st check in ur machine ( go command pront--> java -version --> abouv 11 need)
+if not install jdk -
+go to -https://www.oracle.com/in/java/technologies/downloads/#jdk21-windows 
+x64 MSI Installer (download [https://download.oracle.com/java/21/latest/jdk-21_windows-x64_bin.msi])
+install that file.
+go next next and done
+
+2. Install Python -->
+install python 11.9, not above version
+download using below link -->https://www.python.org/ftp/python/3.11.9/python-3.11.9-amd64.exe
+custome--> select advance option 3,4th option
+*check --> goto command promt--
+C:\Users\HP>python --version
+Python 3.11.9
+
+Spark runs on Java 17/21, Scala 2.13, Python 3.10+, and R 3.5+ (Deprecated). When using the Scala API, it is necessary for applications to use the same version of Scala that Spark was compiled for. Since Spark 4.0.0, it’s Scala 2.13.
+
+3. Spark Binaries -->
+https://spark.apache.org/downloads.html
+spark release --> 4.0.1(sep 06 2025)
+*Download Spark: spark-4.0.1-bin-hadoop3.tgz
+https://www.apache.org/dyn/closer.lua/spark/spark-4.0.1/spark-4.0.1-bin-hadoop3.tgz
+*We suggest the following location for your download:
+https://dlcdn.apache.org/spark/spark-4.0.1/spark-4.0.1-bin-hadoop3.tgz
+
+4. Hadoop WinUtils -->
+goto browser and type - hadoop winutils
+take [hadoop-3.3.6/bin] file and rename "winutils"
+
+
+5. Environment Variables :
+	* SPARK_HOME  	  --> goto edit env -> add variable "SPARK_HOME" give spark-401 path. then add path %SPARK_HOME%\bin
+	* HADOOP_HOME 	  --> goto edit env -> add variable "HADOOP_HOME" give spark-401 path.then add path %HADOOP_HOME%\bin
+	* PYSPARK_PYTHON  -->
+C:\Users\HP>python --version
+Python 3.11.9
+
+C:\Users\HP>where is python
+C:\Users\HP\AppData\Local\Programs\Python\Python311\python.exe
+C:\Users\HP\AppData\Local\Microsoft\WindowsApps\python.exe
+INFO: Could not find "is".
+
+
+	* PYTHONPATH => C:\Users\HP\AppData\Local\Programs\Python\Python311\python.exe
+
+
+
+6. IDE
+
+GOTO COMMAND PROMT-
+
+>> pyspark ENTER
