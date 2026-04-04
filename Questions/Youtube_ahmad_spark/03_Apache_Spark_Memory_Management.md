@@ -84,6 +84,7 @@ Used for:
 ### Dynamic Borrowing – The Critical Rule
 
 ```
+[When memory is full, Spark removes (evicts) some data from memory to free up space.]
 If Execution memory is full  → it can evict Storage blocks (spill to disk)
 If Storage memory is full    → it can borrow free Execution memory
 BUT: Storage CANNOT evict Execution memory (Execution has priority)
