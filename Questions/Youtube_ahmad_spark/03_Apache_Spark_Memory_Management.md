@@ -37,7 +37,7 @@ When you set `spark.executor.memory = 10GB`, you're only defining the **on-heap 
 │  │  │   Unified Memory (6GB)     │  │  fraction = 0.6       │
 │  │  │  ┌──────────┬───────────┐  │  │                       │
 │  │  │  │Execution │  Storage  │  │  │                       │
-│  │  │  │  (3GB)   │  (3GB)   │  │  │                       │
+│  │  │  │  (3GB)   │  (3GB)    │  │  │                       │
 │  │  │  └──────────┴───────────┘  │  │                       │
 │  │  └────────────────────────────┘  │                       │
 │  └──────────────────────────────────┘                       │
