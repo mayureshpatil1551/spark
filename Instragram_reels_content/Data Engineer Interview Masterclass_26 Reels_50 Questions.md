@@ -29,30 +29,16 @@
 
 **[0–3 sec] — HOOK (on screen text: "I engineer data pipelines that process 10 MILLION records every single day 🔥")**
 > "If you're preparing for a Data Engineer interview — this series is for you."
-
-**[3–8 sec]**
 > "My name is Mayuresh Patil. I'm a Data Engineer at Cognizant with 3+ years of experience building enterprise-grade Data Lakehouse architectures."
-
-**[8–15 sec]**
 > "I work with PySpark, Apache Iceberg, Azure Databricks, and Delta Lake — in a pharmaceutical domain where data quality is literally life-critical."
-
-**[15–25 sec]**
 > "Some highlights from my work —
 > ✅ Migrated 10TB+ of pharma data to Apache Iceberg on AWS S3
 > ✅ Architected pipelines processing 10M+ records daily
 > ✅ Built a Golden Record MDM system used across the enterprise
 > ✅ Won the 'Owning It' award in 2025 for technical leadership"
-
-**[25–38 sec]**
 > "I hold the Databricks Certified Data Engineer Associate certification — and I'm starting this series to help YOU crack your Data Engineer interview."
-
-**[38–50 sec]**
 > "Over the next 25 reels, I'm going to cover 50 interview questions — real ones — across PySpark, Apache Iceberg, Azure, ETL architecture, MDM, data governance, and behavioral rounds."
-
-**[50–60 sec] — CTA**
 > "Follow me RIGHT NOW so you don't miss a single one. Drop a 🔥 in the comments if you're preparing for a Data Engineer interview. Let's go!"
-
-**[ON SCREEN TEXT AT END:]**
 > "25 reels. 50 questions. 1 goal — crack your interview. 🎯"
 
 ---
