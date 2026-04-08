@@ -730,5 +730,8 @@ When to Cache:           When NOT to Cache:
 ```
 
 ---
+needed
+💼 Real-World Answer (🔥 say this in interview)
 
+“In one of my projects, we had around 10M+ records where a base DataFrame was reused across multiple aggregations and joins. Initially, Spark was recomputing the lineage for every action, increasing execution time. We cached the DataFrame using MEMORY_AND_DISK since it didn’t fully fit in memory, which significantly reduced execution time.”
 *Last Updated: 2026 | PySpark 3.x | For Data Engineering Interview Prep*
