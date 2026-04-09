@@ -1,471 +1,515 @@
-10_How Salting Can Reduce Data Skew By 99%
-=====================================================================================
+# 10 — How Salting Can Reduce Data Skew by 99% in Apache Spark
+> **Target Audience:** Data Engineers with 3–4 years of experience | Interview + Real-World Prep
 
-00:00 Salting Concept 
-07:06 Applying Salting In Joins 
-12:53 Code Examples For Salting In Joins
-16:56 Applying Salting In Aggregations
-27:57 Code Examples For Salting In Aggregations
+---
 
+## Table of Contents
+1. [What is Data Skew?](#1-what-is-data-skew)
+2. [What is Salting?](#2-what-is-salting)
+3. [Salting in Joins — Step-by-Step](#3-salting-in-joins--step-by-step)
+4. [Salting in Aggregations — Step-by-Step](#4-salting-in-aggregations--step-by-step)
+5. [Full Code Examples](#5-full-code-examples)
+6. [Spark 3 — Adaptive Query Execution (AQE)](#6-spark-3--adaptive-query-execution-aqe)
+7. [When to Use vs Avoid Salting](#7-when-to-use-vs-avoid-salting)
+8. [Interview Questions & Answers](#8-interview-questions--answers)
+9. [Real-World Project Scenarios](#9-real-world-project-scenarios)
+10. [Quick Reference Cheat Sheet](#10-quick-reference-cheat-sheet)
 
---------------------------------------------------------
-Salting Concept 
--->
-What is Salting - Adding randomness to key in order to be able to evenly distributed.
-Data Skew happens when one or few keys contain a very large number of records compared to other keys.
-eg.
-Suppost we hv 1 dataset . in that partition value are
-1 --> 1 Milion records
-2 --> 5
-3 --> 6
-and partiton is 3.
-formula --> hash(value)%shaffle.partitons
-- So, one partition is very large hence its skew. It will take time to process.
-To resolve this, we are using salting
+---
 
-salt number- its basically indicates howmuch we want to distribute the data. 
-no. is we are giving 3. 
-salt_number = 3
-it will random give num between [0,3] --> 0,1,2
-formula -->hash(value,salt)%shaffe.partitions.
-before hash(1)%sp = 1%3 =1. hash(1) is same for all
-now,hash(1,0)%3 = 0 partiton
-    hash(1,1)%3 = 1 partiton
-    hash(1,2)%3 = 2 partiton
+## 1. What is Data Skew?
 
-Salting = Adding randomness to the join/aggregation key to distribute skewed data across multiple partitions.
-Salt Number = Salt number determines how many buckets we divide skewed data into.
+### Definition
 
+Data skew occurs when **one or a few keys contain significantly more records** than other keys — causing those records to land in the same partition, creating a "fat" partition that takes much longer to process than all others.
 
+### How Spark Distributes Data
 
---------------------------------------------------------
-Applying Salting In Joins ( How to apply salting inn skewed data base)
--->
-dataset 1 --> it is skewed. value 1 is in milion
-dataset 2 --> uniformly distributed dataset. partiton, values | 0 - 3 , 1 - 4, 2- 5 
+Spark uses this formula to decide which partition a row goes to during a shuffle:
 
-problem --> All rows with value = 1 go to same partition → slow join
-solution -->
-Step 1 — Add salt to skewed dataset
-    salt = random(0, salt_number-1)
-Step 2 — Duplicate small dataset using explode
-    Create salt array:
-        [0,1,2]
-    ⚠️ Important rule: Always explode the smaller dataset, because explode multiplies row
+```
+partition = hash(key) % shuffle_partitions
+```
 
-Step 3 — Join on value + salt
-    Old join:
-        join on value
+Since `hash(key)` is **deterministic**, all rows with the same key always go to the **same partition**.
 
-    New join:
-        join on (value, salt)
+### Skew Example
 
-    Now records distribute across partitions:
-        hash(value,salt) % partitions
+```
+Dataset with shuffle_partitions = 3:
 
-    Result: balanced join workload
+Key=1 → 1,000,000 rows → all go to partition 1  ← SKEWED (1 executor works 200,000x more)
+Key=2 →           5 rows → partition 0
+Key=3 →           6 rows → partition 2
 
-steps --
-1. for dataset 1, choise is salt_number and assigning num between 0 to salt_number. we call that col ie salt
-2. we create a array which contain all values form 0 until salt_number-1.
-    [0,1,2] for dataset 2. 
-    salt_values = [0,1,2]
-    here are explode the dataset. explode is very costly operation.
-    reccoamnd to do on smaller dataset
-    ie -    1   0
-            1   1
-            1   2
-            2   0   
-            2   1
-            2   2
+Result: Partition 1 takes 10 minutes. Partitions 0 & 2 take 1 second.
+        Job duration = 10 minutes (worst partition wins).
+```
 
-3. We are going to do join on value and salt.
-    early join only on value. hash(value)%shaffle.partitons
-    Now, hash(1,0)%3 = 0
-         hash(1,1)%3 = 1
-         hash(1,2)%3 = 2
+### How to Spot Skew in Spark UI
 
+- **Stage page → Task metrics:** One or a few tasks have dramatically longer durations
+- **Task timeline:** A few long bars vs many short bars
+- **Shuffle read size:** One task reads far more data than others
+- Rule of thumb: If the **max task duration > 3x the median**, you likely have skew
 
---------------------------------------------------------
-Code Examples For Salting In Joins
--->
+```python
+# Detect skew programmatically
+df.withColumn("partition", F.spark_partition_id()) \
+  .groupBy("partition") \
+  .count() \
+  .orderBy(F.col("count").desc()) \
+  .show()
+```
 
-spark.conf.set("spark.sql.shuffle.partitions", "3")
-spark.conf.get("spark.sql.shuffle.partitions")
-spark.conf.set("spark.sql.adaptive.enabled", "false")
+---
 
+## 2. What is Salting?
 
-df_uniform = spark.createDataFrame([i for i in range(1000000)], IntegerType())
-df_uniform.show(5, False)
-[Stage 0:>                                                          (0 + 1) / 1]
-+-----+
-|value|
-+-----+
-|0    |
-|1    |
-|2    |
-|3    |
-|4    |
-+-----+
+### Definition
 
-# Check partition distribution:
-(
-    df_uniform
-    .withColumn("partition", F.spark_partition_id()) # finding spark partiton id per row
-    .groupBy("partition")
-    .count()
-    .orderBy("partition")
-    .show(15, False)
-)
-[Stage 1:====>                                                    (1 + 11) / 12]
-+---------+-----+
-|partition|count|
-+---------+-----+
-|0        |82944|
-|1        |82944|
-|2        |83968|
-|3        |82944|
-|4        |83968|
-|5        |82944|
-|6        |82944|
-|7        |83968|
-|8        |82944|
-|9        |83968|
-|10       |82944|
-|11       |83520|
-+---------+-----+
+**Salting = Adding a random number (salt) to the join/aggregation key** so that rows that previously all hashed to the same partition now hash to different partitions.
 
-                                  
-# below df are not uniformly distributed.
-# Create Skewed Dataset
-df0 = spark.createDataFrame([0] * 999990, IntegerType()).repartition(1)
-df1 = spark.createDataFrame([1] * 15, IntegerType()).repartition(1)
-df2 = spark.createDataFrame([2] * 10, IntegerType()).repartition(1)
-df3 = spark.createDataFrame([3] * 5, IntegerType()).repartition(1)
-# Join Without Salting
-df_skew = df0.union(df1).union(df2).union(df3)
-df_skew.show(5, False)
+### The Math Behind It
 
-+-----+
-|value|
-+-----+
-|0    |
-|0    |
-|0    |
-|0    |
-|0    |
-+-----+
-only showing top 5 rows
+```
+Without salting:
+  hash(key=1) % 3 = partition 1  ← ALL 1M rows go here
 
-                                                                                
-(
-    df_skew
-    .withColumn("partition", F.spark_partition_id())
-    .groupBy("partition")
-    .count()
-    .orderBy("partition")
-    .show()
-)
-+---------+------+
-|partition| count|
-+---------+------+
-|        0|999990|
-|        1|    15|
-|        2|    10|
-|        3|     5|
-+---------+------+
+With salting (salt_number = 3, salt ∈ {0, 1, 2}):
+  hash(key=1, salt=0) % 3 = partition 0  ← ~333K rows
+  hash(key=1, salt=1) % 3 = partition 1  ← ~333K rows
+  hash(key=1, salt=2) % 3 = partition 2  ← ~333K rows
+```
 
-df_joined_c1 = df_skew.join(df_uniform, "value", 'inner')
-(
-    df_joined_c1
-    .withColumn("partition", F.spark_partition_id())  # finding spark partiton id per row
-    .groupBy("partition")
-    .count()
-    .show(5, False)
-)
-+---------+-------+
-|partition|count  |
-+---------+-------+
-|0        |1000005|
-|1        |15     |
-+---------+-------+
+The skewed 1M rows are now **evenly split** across 3 partitions.
 
-# apply salting                                                                                
-# Simulating Uniform Distribution Through Salting 
-# Usually equal to shuffle partitions.
+### Salt Number
+
+The **salt number** controls how many buckets you split the skewed data into.
+
+```python
+# Best practice: align salt number with shuffle partitions
 SALT_NUMBER = int(spark.conf.get("spark.sql.shuffle.partitions"))
-SALT_NUMBER
--->
-3  # becouse spark.conf.set("spark.sql.shuffle.partitions", "3")
+```
 
-# Add Salt to Skewed Dataset
-df_skew = df_skew.withColumn("salt", (F.rand() * SALT_NUMBER).cast("int"))
-df_skew.show(10, truncate=False)
-+-----+----+
-|value|salt|
-+-----+----+
-|0    |2   |
-|0    |0   |
-|0    |0   |
-|0    |1   |
-|0    |2   |
-|0    |2   |
-|0    |0   |
-|0    |2   |
-|0    |2   |
-|0    |1   |
-+-----+----+
-only showing top 10 rows
+Setting `SALT_NUMBER = 10` means:
+- Skewed dataset: each row gets a random salt from `{0, 1, 2, ..., 9}`
+- Non-skewed dataset: each row is **exploded** into 10 rows (one per salt value)
+- Join is now on `(original_key, salt)` instead of just `original_key`
 
+---
 
-df_uniform = (
-    df_uniform
-    .withColumn("salt_values", F.array([F.lit(i) for i in range(SALT_NUMBER)]))
-    .withColumn("salt", F.explode(F.col("salt_values")))
-)
-df_uniform.show(10, truncate=False)
-+-----+-----------+----+
-|value|salt_values|salt|
-+-----+-----------+----+
-|0    |[0, 1, 2]  |0   |
-|0    |[0, 1, 2]  |1   |
-|0    |[0, 1, 2]  |2   |
-|1    |[0, 1, 2]  |0   |
-|1    |[0, 1, 2]  |1   |
-|1    |[0, 1, 2]  |2   |
-|2    |[0, 1, 2]  |0   |
-|2    |[0, 1, 2]  |1   |
-|2    |[0, 1, 2]  |2   |
-|3    |[0, 1, 2]  |0   |
-+-----+-----------+----+
-only showing top 10 rows
+## 3. Salting in Joins — Step-by-Step
 
+### The Problem
 
+```
+Dataset A (skewed):          Dataset B (uniform):
+key=1 → 1,000,000 rows       key=1 → 1 row
+key=2 → 5 rows               key=2 → 1 row
+key=3 → 3 rows               key=3 → 1 row
 
-df_joined = df_skew.join(df_uniform, ["value", "salt"], 'inner')
-(
-    df_joined
-    .withColumn("partition", F.spark_partition_id())
-    .groupBy("value", "partition")
-    .count()
-    .orderBy("value", "partition")
-    .show()
-)
-[Stage 42:>                                                         (0 + 3) / 3]
--->
-value 0 is uniformly distributed on 3 partitons and other are moraless the same
-+-----+---------+------+
-|value|partition| count|
-+-----+---------+------+
-|    0|        0|332774|
-|    0|        1|333601|
-|    0|        2|333615|
-|    1|        0|     6|
-|    1|        1|     9|
-|    2|        0|     2|
-|    2|        1|     2|
-|    2|        2|     6|
-|    3|        0|     3|
-|    3|        1|     2|
-+-----+---------+------+
+Join on key → ALL 1M rows of key=1 go to the SAME partition → straggler task
+```
 
+### The 3-Step Salting Solution
 
---------------------------------------------------------
-Applying Salting In Aggregations
--->
-count the no of values.
+```
+Step 1: Add random salt to the SKEWED (larger) dataset
+        key=1, salt=0
+        key=1, salt=1
+        key=1, salt=2  ← same key, now 3 different (key, salt) combinations
 
+Step 2: EXPLODE the UNIFORM (smaller) dataset with ALL salt values
+        key=1, salt=0   ← replicated
+        key=1, salt=1   ← replicated
+        key=1, salt=2   ← replicated
 
+Step 3: Join on (key, salt) instead of just (key)
+        hash(key=1, salt=0) % 3 → partition 0
+        hash(key=1, salt=1) % 3 → partition 1
+        hash(key=1, salt=2) % 3 → partition 2
+```
 
-# Salting In Aggregations
-df_skew.groupBy("value").count().show()
-+-----+------+
-|value| count|
-+-----+------+
-|    0|999990|
-|    2|    10|
-|    3|     5|
-|    1|    15|
-+-----+------+
+### ⚠️ Critical Rule: Always Explode the SMALLER Dataset
 
+Explode multiplies rows. If you explode the wrong (larger) dataset:
+- `SALT_NUMBER = 10` and skewed dataset has 1M rows → 10M rows after explode
+- This defeats the purpose and makes things worse
 
-Partitions  values  no_of records
-0           0       1 Milion
-1           1       15
-2           2       30 
-3           3       35 
+**Always explode the smaller/non-skewed dataset.**
 
---------------------------------------------------------
-Code Examples For Salting In Aggregations
+### Visual Before/After
 
+```
+BEFORE SALTING:
+Partition 0: [key=1 × 1,000,000]  ← straggler
+Partition 1: [key=2 × 5]
+Partition 2: [key=3 × 3]
 
-This performs:
-1️⃣ Distributed partial aggregation
-2️⃣ Final merge aggregation
+AFTER SALTING (salt_number=3):
+Partition 0: [key=1 × ~333K, key=2 × 1, key=3 × 1]  ← balanced
+Partition 1: [key=1 × ~333K, key=2 × 1, key=3 × 1]  ← balanced
+Partition 2: [key=1 × ~333K, key=2 × 1, key=3 × 1]  ← balanced
+```
 
+---
+
+## 4. Salting in Aggregations — Step-by-Step
+
+### The Problem
+
+```python
+df_skew.groupBy("value").count()
+# All 1M rows with value=0 → same partition → single slow task
+```
+
+### The 2-Phase Salting Solution
+
+Salting in aggregations uses a **map-side partial aggregation** pattern:
+
+```
+Phase 1 — Partial aggregation (distributed):
+  Add salt → groupBy(value, salt) → partial count()
+  
+  value=0, salt=0 → count = 333,333
+  value=0, salt=1 → count = 333,333
+  value=0, salt=2 → count = 333,334
+
+Phase 2 — Final merge (lightweight):
+  groupBy(value) → sum(partial_count)
+  
+  value=0 → total count = 1,000,000
+```
+
+The first groupBy is distributed across partitions (salt distributes key=0).
+The second groupBy has only a **tiny dataset** (one row per value per salt bucket) — no skew possible.
+
+```python
 (
     df_skew
     .withColumn("salt", (F.rand() * SALT_NUMBER).cast("int"))
-    .groupBy("value", "salt")   # hash(value,salt)%shuffle_partition
-    .agg(F.count("value").alias("count"))
-    .groupBy("value")
-    .agg(F.sum("count").alias("count"))
+    .groupBy("value", "salt")          # Phase 1: distributed partial aggregation
+    .agg(F.count("value").alias("partial_count"))
+    .groupBy("value")                  # Phase 2: final merge (tiny data, no skew)
+    .agg(F.sum("partial_count").alias("count"))
     .show()
 )
-spark.stop()
- 
-===============================================================================================
-When Should You Use Salting?
--->
-Use salting when:
-• Join key is highly skewed
-• Aggregation key is skewed
-• One partition processes majority of data
-• Spark UI shows long-running tasks
+```
 
-When NOT to Use Salting
--->
-Avoid salting if:
-• Data is already balanced
-• Dataset explosion becomes too large
-• Broadcast join is possible
-Better alternatives:
-• Broadcast join
-• Adaptive Query Execution (AQE) skew join handling
-• Repartitioning
-• Data pre-aggregation
+### Supported Aggregations with Salting
+
+| Aggregation | Salting Approach | Notes |
+|---|---|---|
+| `count(*)` | Phase 1: count → Phase 2: sum | Straightforward |
+| `sum(col)` | Phase 1: sum → Phase 2: sum | Straightforward |
+| `max(col)` | Phase 1: max → Phase 2: max | Associative — works perfectly |
+| `min(col)` | Phase 1: min → Phase 2: min | Associative — works perfectly |
+| `avg(col)` | Phase 1: sum + count → Phase 2: sum/count | Cannot use avg directly in Phase 1 |
+| `count_distinct` | Phase 1: collect_set → Phase 2: flatten + count | Complex; consider HyperLogLog |
+
+```python
+# avg with salting — correct approach
+(
+    df_skew
+    .withColumn("salt", (F.rand() * SALT_NUMBER).cast("int"))
+    .groupBy("value", "salt")
+    .agg(
+        F.sum("amount").alias("partial_sum"),
+        F.count("amount").alias("partial_count")
+    )
+    .groupBy("value")
+    .agg(
+        (F.sum("partial_sum") / F.sum("partial_count")).alias("avg_amount")
+    )
+    .show()
+)
+```
+
+---
+
+## 5. Full Code Examples
+
+### Setup
+
+```python
+from pyspark.sql import SparkSession
+from pyspark.sql.types import IntegerType
+import pyspark.sql.functions as F
+
+spark = SparkSession.builder.appName("SaltingDemo").getOrCreate()
+
+# Disable AQE for demo (to observe skew behavior manually)
+spark.conf.set("spark.sql.adaptive.enabled", "false")
+spark.conf.set("spark.sql.shuffle.partitions", "3")
+
+SALT_NUMBER = int(spark.conf.get("spark.sql.shuffle.partitions"))  # = 3
+```
+
+### Creating Skewed and Uniform Datasets
+
+```python
+# Uniform dataset (evenly distributed)
+df_uniform = spark.createDataFrame([i for i in range(1_000_000)], IntegerType())
+
+# Skewed dataset (value=0 has 999,990 rows — extreme skew)
+df0 = spark.createDataFrame([0] * 999_990, IntegerType()).repartition(1)
+df1 = spark.createDataFrame([1] * 15,       IntegerType()).repartition(1)
+df2 = spark.createDataFrame([2] * 10,       IntegerType()).repartition(1)
+df3 = spark.createDataFrame([3] * 5,        IntegerType()).repartition(1)
+df_skew = df0.union(df1).union(df2).union(df3)
+
+# Verify skew — partition 0 has 999,990 rows
+df_skew.withColumn("partition", F.spark_partition_id()) \
+       .groupBy("partition").count().orderBy("partition").show()
+# +---------+------+
+# |partition| count|
+# +---------+------+
+# |        0|999990|  ← SKEWED
+# |        1|    15|
+# |        2|    10|
+# |        3|     5|
+# +---------+------+
+```
+
+### Join WITHOUT Salting (Demonstrates Skew)
+
+```python
+df_joined_skewed = df_skew.join(df_uniform, "value", "inner")
+
+df_joined_skewed.withColumn("partition", F.spark_partition_id()) \
+                .groupBy("partition").count().show()
+# +---------+-------+
+# |partition|count  |
+# +---------+-------+
+# |0        |1000005|  ← ONE partition has 1M rows — straggler!
+# |1        |    15 |
+# +---------+-------+
+```
+
+### Join WITH Salting (Balanced)
+
+```python
+# Step 1: Add random salt to the SKEWED dataset
+df_skew_salted = df_skew.withColumn(
+    "salt",
+    (F.rand() * SALT_NUMBER).cast("int")
+)
+
+# Step 2: Explode the UNIFORM (smaller) dataset with all salt values
+df_uniform_exploded = (
+    df_uniform
+    .withColumn("salt_values", F.array([F.lit(i) for i in range(SALT_NUMBER)]))
+    .withColumn("salt", F.explode(F.col("salt_values")))
+    .drop("salt_values")
+)
+# Each row in df_uniform now appears SALT_NUMBER times (one per salt value)
+# This is the trade-off: small dataset grows by SALT_NUMBER factor
+
+# Step 3: Join on (value, salt) instead of just (value)
+df_joined_salted = df_skew_salted.join(df_uniform_exploded, ["value", "salt"], "inner")
+
+df_joined_salted.withColumn("partition", F.spark_partition_id()) \
+                .groupBy("value", "partition").count() \
+                .orderBy("value", "partition").show()
+# +-----+---------+------+
+# |value|partition| count|
+# +-----+---------+------+
+# |    0|        0|332774|  ← value=0 now split across 3 partitions
+# |    0|        1|333601|
+# |    0|        2|333615|
+# |    1|        0|     6|
+# |    1|        1|     9|
+# |    2|        0|     2|
+# |    2|        1|     2|
+# |    2|        2|     6|
+# |    3|        0|     3|
+# |    3|        1|     2|
+# +-----+---------+------+
+```
+
+### Aggregation WITH Salting (2-Phase)
+
+```python
+# WITHOUT salting — skewed aggregation
+df_skew.groupBy("value").count().show()
+# +-----+------+
+# |value| count|
+# +-----+------+
+# |    0|999990|  ← All 1M rows aggregated in one task
+# |    2|    10|
+# |    3|     5|
+# |    1|    15|
+# +-----+------+
+
+# WITH salting — 2-phase distributed aggregation
+(
+    df_skew
+    .withColumn("salt", (F.rand() * SALT_NUMBER).cast("int"))
+    # Phase 1: partial aggregation — distributed across partitions via salt
+    .groupBy("value", "salt")
+    .agg(F.count("value").alias("partial_count"))
+    # Phase 2: final merge — tiny dataset, no skew possible
+    .groupBy("value")
+    .agg(F.sum("partial_count").alias("count"))
+    .show()
+)
+# +-----+------+
+# |value| count|
+# +-----+------+
+# |    0|999990|  ← Same result, but computed across 3 partitions
+# |    1|    15|
+# |    2|    10|
+# |    3|     5|
+# +-----+------+
+```
+
+### Helper Function — Reusable Salting Utility
+
+```python
+def apply_salting_join(df_skewed, df_small, join_keys: list, salt_number: int):
+    """
+    Apply salting to resolve skewed joins.
+    
+    Args:
+        df_skewed:   The large, skewed DataFrame
+        df_small:    The smaller, non-skewed DataFrame
+        join_keys:   List of join key column names
+        salt_number: Number of salt buckets (typically = shuffle_partitions)
+    
+    Returns:
+        Joined DataFrame with skew resolved
+    """
+    # Add random salt to skewed dataset
+    df_skewed_salted = df_skewed.withColumn(
+        "_salt", (F.rand() * salt_number).cast("int")
+    )
+    
+    # Explode small dataset with all salt values
+    df_small_exploded = (
+        df_small
+        .withColumn("_salt_arr", F.array([F.lit(i) for i in range(salt_number)]))
+        .withColumn("_salt", F.explode(F.col("_salt_arr")))
+        .drop("_salt_arr")
+    )
+    
+    # Join on original keys + salt
+    salted_keys = join_keys + ["_salt"]
+    df_joined = df_skewed_salted.join(df_small_exploded, salted_keys, "inner")
+    
+    # Drop the salt column from result
+    return df_joined.drop("_salt")
 
 
-Spark 3 Feature (Important)
--->
-Spark 3 introduced Automatic Skew Join Handling.
-Enable:
-    spark.sql.adaptive.enabled=true
-    spark.sql.adaptive.skewJoin.enabled=true
-Spark automatically splits skewed partitions.
-But manual salting still gives better control in extreme skew cases.
+# Usage
+result = apply_salting_join(
+    df_skewed=df_skew,
+    df_small=df_uniform,
+    join_keys=["value"],
+    salt_number=SALT_NUMBER
+)
+```
 
+---
 
-=====================================================================================================================
+## 6. Spark 3 — Adaptive Query Execution (AQE)
 
-1️⃣ What is Data Skew in Spark?
--->
-Data skew occurs when the data is unevenly distributed across partitions in a Spark cluster.
+### What is AQE?
 
-Spark distributes data using a hash function:
-    partition = hash(key) % number_of_partitions
+Spark 3 introduced **Adaptive Query Execution (AQE)**, which automatically handles skew during runtime — without manual salting.
 
-If one key has a very large number of records compared to other keys, all those records go to the same partition.
-For example, if key A has 1 million records and other keys have only a few records, the partition containing key A will take significantly longer to process.
-As a result, most tasks finish quickly while one task runs for a long time, which slows down the entire Spark job.
-This situation is called data skew.
+```python
+# Enable AQE (default in Spark 3.2+)
+spark.conf.set("spark.sql.adaptive.enabled", "true")
+spark.conf.set("spark.sql.adaptive.skewJoin.enabled", "true")
+```
 
+### How AQE Handles Skew
 
-----------------------------------------------------------------------------------------------
+1. Spark runs the query normally at first
+2. At shuffle boundaries, AQE **inspects actual partition sizes**
+3. If a partition is detected as skewed (size > threshold), AQE **automatically splits it** into smaller sub-partitions
+4. Joins are executed on the split partitions — effectively doing what salting does, automatically
 
-2️⃣ How do you identify Data Skew in Spark?
--->
-There are several ways to identify data skew.
-First, I check the Spark UI. If I see one task taking significantly longer than others or processing much more data, it usually indicates skew.
-Second, I analyze the distribution of keys using a groupBy operation.
-For example:
-    df.groupBy("key").count().orderBy(desc("count"))
+### AQE Skew Detection Parameters
 
-If some keys have extremely large counts compared to others, it indicates skew.
-Third, I sometimes check partition distribution using spark_partition_id() to see how records are distributed across partitions.
+```python
+# A partition is skewed if:
+# size > skewedPartitionFactor × median partition size
+# AND size > skewedPartitionThresholdInBytes
+spark.conf.set("spark.sql.adaptive.skewJoin.skewedPartitionFactor", "5")        # default
+spark.conf.set("spark.sql.adaptive.skewJoin.skewedPartitionThresholdInBytes", "256MB")  # default
+```
 
+### AQE vs Manual Salting — When to Use Each
 
-----------------------------------------------------------------------------------------------
-3️⃣ What is Salting in Spark?
--->
-Salting is a technique used to reduce data skew by adding randomness to the join or aggregation key.
-Instead of joining on a single key, we add a salt column, which is a random number.
-So instead of joining on:
-    key
-we join on:
-    (key, salt)
-The salt distributes records with the same key across multiple partitions.
-This helps Spark process the data more evenly and improves overall performance.
-----------------------------------------------------------------------------------------------
-4️⃣ How do you apply Salting in Spark Join?
--->
-To apply salting in a join, I follow three steps.
-First, I add a random salt column to the skewed dataset.
-Example:
-    df_skew = df_skew.withColumn("salt", (rand() * N).cast("int"))
-Second, I create a salt array in the smaller dataset and explode it so that each row is duplicated with different salt values.
-Example:
-    df_small = df_small
-    .withColumn("salt_values", array(lit(0), lit(1), lit(2)))
-    .withColumn("salt", explode("salt_values"))
-Third, I perform the join using both key and salt.
-    df_skew.join(df_small, ["key", "salt"])
-This distributes skewed keys across multiple partitions and improves join performance.
+| Scenario | AQE | Manual Salting |
+|---|---|---|
+| Moderate skew (predictable) | ✅ Sufficient | Overkill |
+| Extreme skew (99% in one key) | ⚠️ May still struggle | ✅ Better control |
+| Ad-hoc / exploratory queries | ✅ Automatic | Too much setup |
+| Repeated production pipelines | ⚠️ Runtime overhead | ✅ Predictable performance |
+| Skew in aggregations | ❌ AQE doesn't handle | ✅ Salting required |
+| Streaming workloads | ❌ AQE is batch-only | ✅ Manual salting |
 
-----------------------------------------------------------------------------------------------
-5️⃣ Why should explode be applied only on the smaller dataset?
--->
-Explode multiplies the number of rows in a dataset.
-For example, if the salt number is 5 and a dataset has 1 million rows, exploding it will create 5 million rows.
-If we explode a very large dataset, it can significantly increase memory usage and shuffle size.
-Therefore, the best practice is to apply explode only on the smaller dataset, so the increase in data size remains manageable.
-----------------------------------------------------------------------------------------------
-6️⃣ How does Salting work for Aggregations?
--->
-Salting can also be used to handle skew during groupBy aggregations.
-Normally, when we perform:
-    groupBy(key)
-all records with the same key go to a single partition.
-To avoid this, we perform two-stage aggregation.
-First, we add a salt column and perform a partial aggregation:
-    groupBy(key, salt)
-Then we perform a final aggregation:
-    groupBy(key).sum()
-This distributes the aggregation workload across multiple partitions and reduces skew.
-----------------------------------------------------------------------------------------------
-7️⃣ How do you choose the Salt Number?
--->
-The salt number represents how many buckets we want to distribute the skewed data into.
-In most cases, the salt number is chosen based on the number of shuffle partitions.
-For example, if:
-    spark.sql.shuffle.partitions = 200
-we might choose a salt number between 10 and 50, depending on the severity of skew.
-If the skew is extreme, we increase the salt number. However, if the salt number is too large, it can increase shuffle and data duplication.
-So it should be chosen carefully based on the dataset size.
-----------------------------------------------------------------------------------------------
-8️⃣ What are alternative ways to handle Data Skew in Spark?
--->
-There are several alternatives to salting.
-First is broadcast join, where the smaller dataset is broadcast to all executors. This avoids shuffle completely.
-Second is Adaptive Query Execution, which automatically detects skewed partitions and splits them.
-Third is repartitioning the dataset based on a key to distribute data more evenly.
-Fourth is pre-aggregating data before performing joins, which reduces the data size and skew.
-Usually, I try these approaches before implementing salting.
-----------------------------------------------------------------------------------------------
-9️⃣ What are the disadvantages of Salting?
--->
-Salting has some disadvantages.
-First, it duplicates data in the smaller dataset, which increases the size of the dataset.
-Second, it introduces additional shuffle operations, which may increase computation overhead.
-Third, the logic becomes more complex and harder to maintain compared to a simple join.
-Therefore, salting should be used only when other solutions like broadcast joins or AQE cannot resolve the skew problem.
-----------------------------------------------------------------------------------------------
-🔟 What is the difference between Salting and Adaptive Query Execution?
--->
-Salting is a manual technique used to handle skew by adding random salt values to the join key.
-Adaptive Query Execution, or AQE, is a Spark optimization feature introduced in Spark 3 that automatically detects skewed partitions and splits them during execution.
-Salting provides more control but requires manual implementation.
-AQE is simpler to use because Spark handles skew automatically.
-In practice, we usually enable AQE first and apply salting only when skew is still not resolved.
+> **Interview insight:** AQE handles **join skew** but does **NOT** handle **aggregation skew**. For aggregation skew, manual salting is still the best approach.
 
-----------------------------------------------------------------------------------------------
-🔟 Difference Between Salting and Spark AQE Skew Join
--->
+---
 
-| Feature        | Salting               | AQE Skew Join          |
-| -------------- | --------------------- | ---------------------- |
-| Implementation | Manual                | Automatic              |
-| Control        | High                  | Low                    |
-| Complexity     | Higher                | Simple                 |
-| Performance    | Best for extreme skew | Good for moderate skew |
-| Spark Version  | Works in all versions | Spark 3+               |
+## 7. When to Use vs Avoid Salting
+
+### Use Salting When:
+- Join key has extreme skew (one key dominates the dataset)
+- Aggregation key is skewed (groupBy produces one huge partition)
+- Spark UI shows straggler tasks (one task 10x+ longer than others)
+- AQE is disabled or insufficient for the level of skew
+- You're working with streaming micro-batches (AQE unavailable)
+
+### Avoid Salting When:
+- Data is already balanced — salting adds unnecessary complexity
+- A **broadcast join** is possible (small table fits in memory, no shuffle needed)
+  ```python
+  df_large.join(F.broadcast(df_small), "key")  # No shuffle, no skew possible
+  ```
+- Salt number is too high — the exploded small dataset becomes too large
+  - `SALT_NUMBER = 100`, small table = 10M rows → 1B rows after explode
+- AQE is enabled and sufficient for the level of skew
+- You can **pre-aggregate** to reduce skew before the join
+
+### Cost-Benefit of Salting
+
+```
+Benefit:
+  Reduces straggler task duration by SALT_NUMBER factor
+  (1M rows in 1 task → ~333K rows in 3 tasks with SALT_NUMBER=3)
+
+Cost:
+  Small dataset is multiplied by SALT_NUMBER (explode overhead)
+  Slightly more complex code to maintain
+  Extra shuffle stage for the explode operation
+```
+
+---
+
+## 8. Interview Questions & Answers
+
+---
+
+### Q1. What is data skew in Spark and why is it a problem?
+
+**Answer:**
+Data skew occurs when one or a few partition keys contain significantly more data than others. Because Spark uses `hash(key) % shuffle_partitions` to route rows during shuffles, all rows with the same key always land in the same partition and are processed by the same executor task.
+
+The problem is that **a Spark stage only completes when ALL tasks finish**. If one task processes 1 million rows while others process 5 rows each, the entire stage waits for the slow task — making the job as slow as its worst partition. This is called a **straggler task**.
+
+---
+
+### Q2. Explain the salting technique for joins. What are the exact steps?
+
+**Answer:**
+Salting resolves join skew by adding a random number (salt) to the join key, breaking one large partition into multiple smaller ones.
+
+**Steps:**
+1. Choose a `SALT_NUMBER` (typically equal to `shuffle_partitions`)
+2. Add a random integer from `{0, ..., SALT_NUMBER-1
