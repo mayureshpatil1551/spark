@@ -512,4 +512,337 @@ Salting resolves join skew by adding a random number (salt) to the join key, bre
 
 **Steps:**
 1. Choose a `SALT_NUMBER` (typically equal to `shuffle_partitions`)
-2. Add a random integer from `{0, ..., SALT_NUMBER-1
+2. Add a random integer from `{0, ..., SALT_NUMBER-1}` to the **skewed (larger) dataset** as a new `salt` column
+3. **Explode** the **non-skewed (smaller) dataset** — for each row, create `SALT_NUMBER` rows, one for each salt value `{0, 1, 2, ...}`
+4. Join the two datasets on `(original_key, salt)` instead of just `original_key`
+
+Now, rows that previously all hashed to the same partition (same key → same hash) now hash differently because `hash(key, salt=0)`, `hash(key, salt=1)`, `hash(key, salt=2)` produce different results.
+
+The critical rule: **always explode the smaller dataset**, because explode multiplies rows by `SALT_NUMBER`. Exploding the larger dataset would make things worse.
+
+---
+
+### Q3. How does salting work for aggregations? Why is a 2-phase approach needed?
+
+**Answer:**
+For aggregations, you cannot simply add a salt column and do a single `groupBy` — that would give wrong results (you'd get one row per `(value, salt)` instead of one row per `value`).
+
+The correct approach is a **2-phase aggregation:**
+
+**Phase 1 — Partial aggregation (distributed):**
+Add a salt column, then `groupBy(key, salt)` and compute the partial aggregate. Salt distributes the skewed data across partitions. For example, 1M rows with `key=0` split into 3 groups of ~333K, each aggregated independently.
+
+**Phase 2 — Final merge (lightweight):**
+`groupBy(key)` on the output of Phase 1 (which now has at most `DISTINCT_KEYS × SALT_NUMBER` rows — a tiny dataset). Merge the partial aggregates (e.g., `sum` the partial `count` values).
+
+This works cleanly for `count`, `sum`, `max`, `min`. For `avg`, you must track `sum` and `count` separately in Phase 1 and compute `sum/count` in Phase 2.
+
+---
+
+### Q4. What is the difference between salting and broadcast join for handling skew?
+
+**Answer:**
+
+| Aspect | Salting | Broadcast Join |
+|---|---|---|
+| Mechanism | Distributes skewed keys across partitions | Sends small table to all executors — no shuffle |
+| Applicable when | Both tables are large | One table is small (fits in memory, typically < 10 MB default) |
+| Complexity | Requires code changes | One-line solution |
+| Works for aggregations | Yes | Not applicable |
+| AQE equivalent | AQE Skew Join | AQE Auto Broadcast |
+
+```python
+# Broadcast join — simplest solution when one table is small
+from pyspark.sql.functions import broadcast
+df_result = df_large.join(broadcast(df_small), "key")
+```
+
+Always prefer broadcast join over salting when the non-skewed table fits in memory — it eliminates the shuffle entirely, not just redistributes it.
+
+---
+
+### Q5. What is AQE and how does it automatically handle skew? What are its limitations?
+
+**Answer:**
+Adaptive Query Execution (AQE), introduced in Spark 3.0, is a runtime optimization that adjusts query plans based on actual data statistics observed during execution.
+
+For skew, AQE's skew join feature:
+1. Observes actual partition sizes after a shuffle stage completes
+2. Identifies partitions that are skewed (size > `skewedPartitionFactor` × median AND > `skewedPartitionThresholdInBytes`)
+3. Automatically splits those large partitions into sub-partitions
+4. Matches the split partitions against the corresponding data from the other side of the join
+
+**Limitations:**
+- Only handles **join skew**, not **aggregation skew** — manual salting is still needed for groupBy
+- May not be sufficient for **extreme skew** (99%+ of data in one key)
+- Adds **runtime overhead** — AQE collects statistics at each shuffle boundary
+- Not available in **Structured Streaming** (batch-only)
+- The threshold parameters may need tuning for very large datasets
+
+---
+
+### Q6. If SALT_NUMBER is too high, what problems can occur?
+
+**Answer:**
+Setting `SALT_NUMBER` too high has two main problems:
+
+**1. Dataset explosion on the small table:**
+The non-skewed (smaller) dataset is exploded by `SALT_NUMBER`. If the small table has 10 million rows and `SALT_NUMBER = 100`, it becomes 1 billion rows — which can cause OOM errors or excessive disk I/O.
+
+**2. Diminishing returns:**
+If `shuffle_partitions = 200` and `SALT_NUMBER = 200`, you're splitting 1M rows into 200 groups of 5,000 rows each. Going to `SALT_NUMBER = 400` only splits them into 2,500 rows per group — the improvement is marginal but the explosion cost doubles.
+
+**Best practice:** Set `SALT_NUMBER` equal to or a small multiple of `spark.sql.shuffle.partitions`. Start with the shuffle partition count and increase only if skew persists.
+
+---
+
+### Q7. How would you detect and diagnose data skew without looking at the Spark UI?
+
+**Answer:**
+```python
+# Method 1: Check partition distribution
+df.withColumn("partition", F.spark_partition_id()) \
+  .groupBy("partition") \
+  .count() \
+  .orderBy(F.col("count").desc()) \
+  .show(20)
+# If max count >> median count → skew exists
+
+# Method 2: Check key distribution directly
+df.groupBy("join_key") \
+  .count() \
+  .orderBy(F.col("count").desc()) \
+  .show(10)
+# Top keys with massive counts are your skew culprits
+
+# Method 3: Statistical summary
+df.groupBy("join_key") \
+  .count() \
+  .select(
+      F.max("count").alias("max_count"),
+      F.avg("count").alias("avg_count"),
+      F.expr("percentile(count, 0.5)").alias("median_count"),
+      F.expr("percentile(count, 0.95)").alias("p95_count")
+  ) \
+  .show()
+# Skewed if max >> median (e.g., max=1M, median=10 → extreme skew)
+```
+
+---
+
+### Q8. What happens to the join result correctness after salting? Does salting change the output?
+
+**Answer:**
+No — salting does **not** change the correctness of the join result. The final output is identical to a non-salted join.
+
+Here's why: Each row in the skewed dataset has a random salt value (e.g., salt=1). The small dataset has been exploded to contain ALL salt values (salt=0, salt=1, salt=2). So for every (key, salt=1) row in the skewed dataset, there is exactly **one matching (key, salt=1) row** in the exploded small dataset. The join correctly matches them.
+
+The salt column is a synthetic routing key — it changes WHERE rows are processed (which partition), not WHICH rows match each other. After the join, you drop the salt column and get the same result as without salting.
+
+---
+
+## 9. Real-World Project Scenarios
+
+---
+
+### Scenario 1 — E-Commerce: Skewed Order Enrichment (Most Common)
+
+**Problem:**
+You work at an e-commerce company. Your daily pipeline joins a `orders` fact table (500M rows) with a `customers` dimension table (10M rows). The join key is `customer_id`. You discover that 5 "super seller" marketplace accounts each have 50M+ orders — 80% of all data. These 5 keys cause extreme skew.
+
+**Diagnosis:**
+```python
+# Top customer order counts
+df_orders.groupBy("customer_id") \
+         .count() \
+         .orderBy(F.col("count").desc()) \
+         .show(10)
+# customer_id=C001 → 52,000,000 rows ← 80% of all data
+# customer_id=C002 → 48,000,000 rows
+# All others       →      < 100 rows each
+```
+
+**Solution:**
+```python
+from pyspark import StorageLevel
+
+SALT_NUMBER = 50  # High salt for extreme skew
+
+# Step 1: Salt the large orders table
+df_orders_salted = df_orders.withColumn(
+    "_salt",
+    (F.rand() * SALT_NUMBER).cast("int")
+)
+
+# Step 2: Explode the customers table (10M × 50 = 500M rows — acceptable)
+df_customers_exploded = (
+    df_customers
+    .withColumn("_salt_arr", F.array([F.lit(i) for i in range(SALT_NUMBER)]))
+    .withColumn("_salt", F.explode("_salt_arr"))
+    .drop("_salt_arr")
+)
+df_customers_exploded.persist(StorageLevel.MEMORY_AND_DISK)  # Cache the exploded table
+
+# Step 3: Join
+df_enriched = df_orders_salted.join(
+    df_customers_exploded,
+    ["customer_id", "_salt"],
+    "left"
+).drop("_salt")
+
+df_enriched.write.mode("overwrite").parquet("s3://output/enriched_orders/")
+
+df_customers_exploded.unpersist()
+```
+
+**Result:** Job that previously ran for 4 hours (straggler tasks with 50M rows) now completes in 20 minutes.
+
+---
+
+### Scenario 2 — Fintech: Skewed Daily Transaction Aggregation
+
+**Problem:**
+You process a payments platform's transactions. When computing daily `sum(amount)` and `count(*)` by `merchant_id`, a handful of large merchants (Amazon, Walmart) have 10M+ transactions per day while most merchants have fewer than 100. Standard groupBy produces extreme aggregation skew.
+
+**Solution — 2-Phase Salted Aggregation:**
+```python
+SALT_NUMBER = 200  # Large enough to split 10M rows into manageable chunks
+
+daily_merchant_stats = (
+    df_transactions
+    .filter(F.col("status") == "SUCCESS")
+    
+    # Phase 1: Add salt + partial aggregation
+    .withColumn("_salt", (F.rand() * SALT_NUMBER).cast("int"))
+    .groupBy("merchant_id", "txn_date", "_salt")
+    .agg(
+        F.sum("amount").alias("partial_sum"),
+        F.count("*").alias("partial_count"),
+        F.max("amount").alias("partial_max"),
+        F.min("amount").alias("partial_min")
+    )
+    
+    # Phase 2: Final merge
+    .groupBy("merchant_id", "txn_date")
+    .agg(
+        F.sum("partial_sum").alias("total_amount"),
+        F.sum("partial_count").alias("total_txns"),
+        F.max("partial_max").alias("max_txn_amount"),
+        F.min("partial_min").alias("min_txn_amount"),
+        (F.sum("partial_sum") / F.sum("partial_count")).alias("avg_txn_amount")
+    )
+)
+
+daily_merchant_stats.write.mode("overwrite") \
+    .partitionBy("txn_date") \
+    .parquet("s3://output/merchant_daily_stats/")
+```
+
+---
+
+### Scenario 3 — Null Key Skew (Frequently Overlooked)
+
+**Problem:**
+Your join key contains a large number of `NULL` values — perhaps due to data quality issues upstream. All `NULL` values hash to the same partition, causing skew even though no single "real" key is dominant.
+
+```python
+# Detect null skew
+df.filter(F.col("customer_id").isNull()).count()
+# Output: 2,500,000 ← 50% of rows have NULL customer_id
+```
+
+**Solution — Handle nulls before salting:**
+```python
+# Option 1: Filter out nulls before join
+df_clean = df.filter(F.col("customer_id").isNotNull())
+
+# Option 2: Replace nulls with a unique key per row (no false matches)
+df_clean = df.withColumn(
+    "customer_id",
+    F.when(
+        F.col("customer_id").isNull(),
+        F.concat(F.lit("NULL_"), F.monotonically_increasing_id().cast("string"))
+    ).otherwise(F.col("customer_id"))
+)
+# Each null gets a unique key → spreads across all partitions
+# NULLs will never match anything in the right table → equivalent to filtering
+```
+
+---
+
+### Scenario 4 — AQE + Manual Salting Hybrid for Production
+
+**Problem:**
+You're building a production-grade pipeline where some join keys are mildly skewed (AQE can handle) but one specific key is catastrophically skewed (99% of data). You want AQE as a safety net but manual salting for the known bad key.
+
+**Solution — Pre-split the hot key:**
+```python
+spark.conf.set("spark.sql.adaptive.enabled", "true")
+spark.conf.set("spark.sql.adaptive.skewJoin.enabled", "true")
+
+SALT_NUMBER = 100
+HOT_KEY = "SUPER_MERCHANT_001"
+
+# Split the problem: handle the known hot key with salting, rest with AQE
+df_hot  = df_orders.filter(F.col("merchant_id") == HOT_KEY)
+df_rest = df_orders.filter(F.col("merchant_id") != HOT_KEY)
+
+# Salting for the hot key only
+df_hot_salted = df_hot.withColumn("_salt", (F.rand() * SALT_NUMBER).cast("int"))
+df_merchants_hot = (
+    df_merchants.filter(F.col("merchant_id") == HOT_KEY)
+    .withColumn("_salt_arr", F.array([F.lit(i) for i in range(SALT_NUMBER)]))
+    .withColumn("_salt", F.explode("_salt_arr"))
+    .drop("_salt_arr")
+)
+df_hot_joined = df_hot_salted.join(df_merchants_hot, ["merchant_id", "_salt"], "left").drop("_salt")
+
+# AQE handles the rest (moderate skew)
+df_rest_joined = df_rest.join(df_merchants, "merchant_id", "left")
+
+# Union the two results
+df_final = df_hot_joined.union(df_rest_joined)
+df_final.write.mode("overwrite").parquet("s3://output/enriched/")
+```
+
+---
+
+## 10. Quick Reference Cheat Sheet
+
+```
+┌──────────────────────────────────────────────────────────────────────┐
+│                    SALTING QUICK REFERENCE                           │
+├─────────────────────┬────────────────────────────────────────────────┤
+│ Detect Skew         │ groupBy(key).count().orderBy(count desc)        │
+│ Salt the skewed DF  │ .withColumn("_salt", (rand()*N).cast("int"))    │
+│ Explode small DF    │ .withColumn("_salt", explode(array(0..N-1)))    │
+│ Join on             │ ["original_key", "_salt"]                       │
+│ Aggregation Phase 1 │ groupBy(key, salt).agg(partial_count)           │
+│ Aggregation Phase 2 │ groupBy(key).agg(sum(partial_count))            │
+├─────────────────────┼────────────────────────────────────────────────┤
+│ SALT_NUMBER         │ = shuffle_partitions (good starting point)      │
+│ Explode which DF?   │ ALWAYS the SMALLER / non-skewed DataFrame       │
+│ AQE for joins?      │ spark.sql.adaptive.skewJoin.enabled = true      │
+│ AQE for groupBy?    │ ❌ No — use manual 2-phase salting              │
+├─────────────────────┼────────────────────────────────────────────────┤
+│ Prefer broadcast    │ If small DF fits in memory → use broadcast()    │
+│ Prefer AQE          │ Moderate skew, batch jobs, Spark 3+             │
+│ Use manual salting  │ Extreme skew, aggregations, streaming           │
+├─────────────────────┼────────────────────────────────────────────────┤
+│ Aggregation Support │                                                 │
+│   count → sum       │ count partials, sum in Phase 2                  │
+│   sum → sum         │ sum partials, sum in Phase 2                    │
+│   max → max         │ max partials, max in Phase 2                    │
+│   avg → sum/count   │ track sum + count, divide in Phase 2           │
+└─────────────────────┴────────────────────────────────────────────────┘
+
+Skew Root Causes:
+  ① Naturally skewed business data (top customers, popular products)
+  ② NULL keys (all nulls → same partition)
+  ③ Default values used as keys ("N/A", "UNKNOWN", -1)
+  ④ Time-based keys (hourly data → one hour has all the traffic)
+```
+
+---
+
+*Last Updated: 2026 | PySpark 3.x | For Data Engineering Interview Prep*
