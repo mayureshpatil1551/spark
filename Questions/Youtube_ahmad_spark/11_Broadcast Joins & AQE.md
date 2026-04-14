@@ -138,7 +138,8 @@ SQL tab → Query plan → Look for `BroadcastHashJoin` in the plan that was ori
 
 ### The Problem
 Sort-Merge Joins on skewed data produce partitions of wildly unequal size. One task processes 100M rows while others process 100 rows — a **straggler task** that holds up the entire stage.
-
+A **straggler task** in Spark is a task that runs significantly slower than other parallel tasks in the same stage, causing the entire job to delay because Spark waits for all tasks to complete.
+Straggler = slow task that delays the whole Spark job.
 ### AQE Solution — Automatic Skew Partition Splitting
 AQE detects skewed partitions after observing shuffle output and **automatically splits** them into smaller sub-partitions. These sub-partitions are joined independently against matching partitions (which are duplicated as needed).
 
