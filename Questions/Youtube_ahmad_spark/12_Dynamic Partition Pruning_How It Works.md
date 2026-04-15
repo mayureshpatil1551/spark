@@ -20,7 +20,8 @@
 
 💼 Real-World Use Case
 
-Pruning in Spark is an optimization technique where unnecessary data is skipped during query execution, so only the required data is read and processed.
+**Pruning** in Spark is an optimization technique where unnecessary data is skipped during query execution, so only the required data is read and processed.
+
 In a partitioned Iceberg table, when we filter on partition column like date, Spark automatically prunes unnecessary partitions, reducing scan size and improving query performance/
 
 
