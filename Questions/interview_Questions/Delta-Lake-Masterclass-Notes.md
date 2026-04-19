@@ -1105,6 +1105,9 @@ Independence: Complete
 Source dependency: None
 ```
 
+Note  - inert/update/merge/delete Operations are synced incrementally. However, Schema changes or changes in Partitioning, 
+column changes will trigger a full DEEP CLONE.
+
 ### 14.3 CTAS vs Deep Clone
 
 | | CTAS | Deep Clone |
