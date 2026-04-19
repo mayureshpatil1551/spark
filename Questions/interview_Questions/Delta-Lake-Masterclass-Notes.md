@@ -891,7 +891,7 @@ CREATE TABLE employees_managed (
 ### External Tables
 
 - Delta Lake owns only the **metadata** (table definition in the metastore)
-- Data files live at a **user-specified LOCATION**
+- Data files live at a **user-specified LOCATION** - S3, ADLSGen2
 - **DROP TABLE deletes only the metadata — data files remain safe**
 
 ```sql
