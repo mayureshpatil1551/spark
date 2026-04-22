@@ -592,6 +592,14 @@ spark.sql("""
         sort_order => 'event_date ASC, event_hour ASC'
     )
 """)
+
+Set file size
+→ controls future writes
+Run compaction
+→ fixes already existing small files
+
+SET TBLPROPERTIES → future file size control
+rewrite_data_files → clean & optimize old data
 ```
 
 ---
