@@ -864,6 +864,14 @@ spark.sql("""
     PARTITIONED BY (dept STRING, year INT)
 """)
 ```
+note-
+
+- This creates a _delta_log alongside your Parquet files at s3a://bucket/raw/abc.parquet.
+
+- The dataset is now a Delta table by path, but it’s not known to the metastore.
+
+- You can query it using .load("s3a://bucket/raw/abc.parquet"), but not with spark.sql("SELECT * FROM abc") yet.
+
 
 **What happens during conversion:**
 1. Delta scans all Parquet files and collects statistics
