@@ -655,8 +655,11 @@ Second, Spark consults the **Catalog** to validate column names, resolve data ty
 
 Third, the **Catalyst Optimizer** applies rule-based transformations — filter pushdown, projection pushdown, constant folding, predicate simplification — producing an **Optimized Logical Plan**.
 
-Finally, Spark generates multiple candidate **Physical Plans**, evaluates them using the Cost-Based Optimizer (CBO) with table statistics, and selects the most efficient one. This physical plan runs on the cluster with concrete operators like `SortMergeJoin`, `BroadcastHashJoin`, and `HashAggregate`.
+Finally, Spark generates multiple candidate **Physical Plans**, evaluates them using the Cost-Based Optimizer (CBO) with table statistics, and selects the most efficient one. This physical plan runs on the cluster with operators like `SortMergeJoin`, `BroadcastHashJoin`, and `HashAggregate`.
 
+During this stage, it also uses Whole-Stage Code Generation to generate Java code, convert it into bytecode, and run it faster on the cluster.
+
+So overall, the flow is: parse, analyze, optimize, and execute.
 ---
 
 ### Q2. What is Filter Pushdown and why is it important?
