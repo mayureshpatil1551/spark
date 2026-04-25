@@ -488,6 +488,14 @@ dt.createOrReplaceTempView("emp")
 spark.sql("DESCRIBE HISTORY emp")
 ```
 
+note -
+- Small tables → one checkpoint Parquet file.
+  
+- Huge tables → checkpoint split into multiple sidecar Parquet files, each capped at a configured size (≈256 MB).
+
+- Manifest ensures Spark reads all sidecars together in parallel.
+
+
 ---
 
 ## 7. Concurrency Control
