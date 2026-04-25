@@ -649,7 +649,7 @@ spark.conf.set("spark.sql.adaptive.coalescePartitions.enabled", "true")
 **Answer:**
 When you run a Spark query, it passes through four phases before execution.
 
-First, Spark parses your code into an **Unresolved Logical Plan** — a tree of operations where column names exist as strings but haven't been validated yet.
+First, Spark analyses your code into an **Unresolved Logical Plan** — a tree of operations where column names exist as strings but haven't been validated yet.
 
 Second, Spark consults the **Catalog** to validate column names, resolve data types, and check table existence, producing a **Resolved (Analyzed) Logical Plan**. This is where `AnalysisException` is thrown for invalid columns.
 
