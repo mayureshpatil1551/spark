@@ -127,6 +127,7 @@ response = {
     ]
 }
 
+# parallelize used - Spark works on Restributed data(RDDs/DF), not local python objects
 # Step 2: Serialize back to JSON string, parallelize as RDD
 rdd = spark.sparkContext.parallelize([json.dumps(response)])
 
