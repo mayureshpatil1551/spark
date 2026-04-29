@@ -51,6 +51,8 @@ Based on the ingestion frameworks you built, key tuning strategies include:
 
 **2. JDBC parallelism** — when reading from Oracle via JDBC, use the `partitionColumn`, `lowerBound`, `upperBound`, and `numPartitions` options to read in parallel rather than a single-threaded sequential pull:
 
+this is only where col is numeric
+
 ```python
 spark.read.jdbc(url, table, column="id", lowerBound=1, upperBound=10000000, numPartitions=200, properties=props)
 ```
