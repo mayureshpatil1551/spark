@@ -1382,6 +1382,8 @@ Z-Ordering is a **multi-dimensional data clustering technique** that co-locates 
 
 **Goal:** Minimise the number of files that need to be read for a given query filter.
 
+Z-order is logically sort and repatition.
+
 ### The Problem Without Z-Ordering
 
 Imagine a table with 1000 files where each file contains records from random ranges of `salary` and `region`:
