@@ -335,6 +335,25 @@ Manual gate → Deploy to Production
 
 **5. Testing:** Use `chispa` for DataFrame equality assertions, mock external data sources, run against a small fixture dataset in CI.
 
+
+01 - 
+Version notebooks in GitStore all notebooks and job definitions in GitHub or Azure DevOps; sync with Databricks Repos.
+
+02 - 
+Develop in feature branchesWork in isolated branches and commit changes; avoid editing directly in production workspaces.
+
+03 - 
+Run CI unit testsOn pull requests, run pytest and chispa tests against fixture datasets to validate logic.
+
+04 - 
+Deploy to Dev environmentAfter merge, use Databricks CLI, Terraform, or dbx to deploy notebooks and jobs to the Dev workspace.
+
+05 - 
+Promote to StagingWith QA approval, deploy to Staging for integration testing and validation.
+
+06 - 
+Gate Production releaseUse manual approval before deploying to Production; ensure jobs, clusters, and secrets are correctly configured.
+
 ---
 
 ## 🟠 ETL & Architecture
