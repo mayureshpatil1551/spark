@@ -335,6 +335,7 @@ Manual gate → Deploy to Production
 
 **5. Testing:** Use `chispa` for DataFrame equality assertions, mock external data sources, run against a small fixture dataset in CI.
 
+------------------------------------------------------------------------------------------------------------------------------------------------
 
 01 - 
 Version notebooks in GitStore all notebooks and job definitions in GitHub or Azure DevOps; sync with Databricks Repos.
