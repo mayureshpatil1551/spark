@@ -668,6 +668,8 @@ SET ROW FILTER patient_region_filter ON (patient_region);
 
 **4. Audit all access** — enable Unity Catalog audit logs to Delta Lake, then use Databricks SQL to query who accessed sensitive columns and when.
 
+-----
+is_account_group_member() is a built‑in security function in Databricks SQL (and similar platforms) that checks whether the current user belongs to a specific account group.
 ---
 
 ## ⚪ Behavioral & Scenario
