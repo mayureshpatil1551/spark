@@ -68,12 +68,19 @@ df_cleaned.writeTo("iceberg.bronze.veeva_patients").append()
 
 **Answer:**
 
-The **Catalyst Optimizer** is Spark's query optimization engine. It works in 4 phases:
+The **Catalyst optimizer** transforms your logical query plan into an optimized physical execution plan in four phases:
 
-1. **Analysis** — Resolves column names, table references using the catalog
-2. **Logical Optimization** — Applies rule-based optimizations (predicate pushdown, constant folding, column pruning)
-3. **Physical Planning** — Converts logical plan to physical plan (chooses join strategies like broadcast join vs sort-merge join)
-4. **Code Generation** — Generates bytecode using **Tungsten** for fast execution
+1. **Analysis** — resolves column names, types, functions against the catalog.
+2. **Logical optimization** — applies rule-based optimizations: predicate pushdown, column pruning, constant folding, Boolean simplification.
+3. **Physical planning** — generates multiple physical plans and picks the cheapest using a cost model (considers row counts, join strategies).
+4. **Code generation** — generates bytecode (via Tungsten's whole-stage code gen) that executes as a tight Java loop.
+
+**How to influence it:**
+- Use DataFrames/SQL (not RDDs) — Catalyst only optimizes these
+- Collect table statistics: `ANALYZE TABLE t COMPUTE STATISTICS FOR COLUMNS col1, col2` — improves cost-based join selection
+- Use partition pruning — filter on partition columns so Catalyst skips irrelevant files
+- Avoid UDFs where possible — they're black boxes to Catalyst and disable predicate pushdown
+
 
 **Real-world context (AbbVie):**
 When you achieved 50% reduction in Spark pipeline execution time, a large part of that was enabling Catalyst to do **predicate pushdown into Iceberg**. Instead of reading all records and then filtering, Catalyst pushed `WHERE` conditions into Iceberg's metadata layer — reading only relevant files.
