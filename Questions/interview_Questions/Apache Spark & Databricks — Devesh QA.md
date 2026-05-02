@@ -1,5 +1,5 @@
 # Apache Spark & Databricks — Interview Prep Guide
-### Mayuresh Patil | Data Engineer | AbbVie / Cognizant
+### Mayuresh Patil | Data Engineer | AbbVie / Cognizant 
 
 ---
 
