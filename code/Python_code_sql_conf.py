@@ -9,6 +9,11 @@
              validates the YAML with Pydantic, then renders SQL DDL
              and pipeline config files for all environments using
              Jinja2 templates — in under 5 minutes.
+Requirements : 
+              pyyaml>=6.0
+              jinja2>=3.1
+              pydantic>=2.0
+
 =====================================================================
 """
 
