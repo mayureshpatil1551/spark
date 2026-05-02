@@ -300,6 +300,16 @@ OPTIMIZE silver.patient_data ZORDER BY (patient_id, load_date);
 
 -- Equivalent in Iceberg (sort order at write time)
 -- Set sort order when creating table
+-- Iceberg: define sort order
+CREATE TABLE silver.patient_data (
+    patient_id BIGINT,
+    load_date DATE,
+    name STRING
+)
+USING iceberg
+PARTITIONED BY (load_date)
+WITH WRITE ORDERED BY (patient_id, load_date);
+
 ```
 
 ---
