@@ -770,23 +770,170 @@ This is a chance to demonstrate initiative and ownership mindset — not just te
 
 ### Q40 (Advanced) — A stakeholder says your pipeline is too slow and data arrives 3 hours late. How do you diagnose and fix it?
 
-**Structured diagnostic approach:**
+# How Do You Ensure Data Quality in Your Pipelines?
+### Interview Answer Guide — Mayuresh Patil | PwC Data Engineering Associate
 
-**Step 1 — Define the baseline:** Is this new or has it always been slow? Compare execution times across the last 30 runs to identify when the degradation started.
+---
 
-**Step 2 — Identify the bottleneck layer:**
-- Check ADF pipeline monitoring — which activity took the most time?
-- Open Databricks job UI — which Spark stage is the slowest?
-- Check Spark UI for that job — which task within the stage is the straggler?
+## Opening Statement
 
-**Step 3 — Common culprits and fixes:**
-- **Data volume growth** — source table has grown; need to repartition or add incremental filtering
-- **Data skew** — one partition has 10x more data; apply salting or AQE skew handling
-- **Small files accumulation** — compaction job hasn't run; run `OPTIMIZE` or Iceberg rewrite
-- **Missing partition pruning** — query not filtering on partition column; rewrite the filter
-- **Resource contention** — cluster is undersized or shared with other jobs; right-size the cluster or add isolation
+> *"I approach data quality in layers, mirroring the Medallion Architecture I've built. Each layer of the pipeline has its own quality gate — so bad data is caught as early as possible and never silently propagates downstream."*
 
-**Step 4 — SLA conversation:** If the fix requires structural changes (re-architecture), negotiate short-term mitigation (run earlier, larger cluster) while the proper fix is implemented.
+---
+
+## Layer 1 — Schema Validation at Ingestion (Bronze)
+
+The first line of defence is stopping bad data from entering the lake entirely.
+
+In **eCDP**, I used **Delta Schema Enforcement** so any record with unexpected columns or mismatched data types would fail loudly rather than silently corrupt downstream tables. When schema *did* need to evolve (Oracle and Salesforce changed frequently), I used `mergeSchema` in a controlled, reviewed way — never blindly.
+
+```python
+# Strict schema enforcement by default — any mismatch raises AnalysisException
+df.write \
+    .format("delta") \
+    .mode("append") \
+    .save("/mnt/bronze/clinical_events")
+
+# Controlled schema evolution only when approved
+df.write \
+    .format("delta") \
+    .option("mergeSchema", "true") \
+    .mode("append") \
+    .save("/mnt/bronze/clinical_events")
+```
+
+---
+
+## Layer 2 — Data Quality Rules at Silver (The Core Layer)
+
+This is where most of the quality work happens. I enforce:
+
+- **Null checks** on critical business keys (`patient_id`, `visit_date`)
+- **Referential integrity** — joining against dimension/lookup tables to catch orphan records
+- **Deduplication** using window functions before writing to Silver
+- **Range / domain validation** — dates can't be in the future, amounts can't be negative
+
+```python
+from pyspark.sql.functions import col, row_number, desc
+from pyspark.sql.window import Window
+
+# ── Null Check ──────────────────────────────────────────────────────────────
+null_count = df.filter(col("patient_id").isNull()).count()
+if null_count > 0:
+    raise ValueError(f"Data quality failure: {null_count} null patient_ids found")
+
+# ── Deduplication ────────────────────────────────────────────────────────────
+w = Window.partitionBy("patient_id", "visit_date").orderBy(desc("updated_at"))
+df_deduped = (
+    df.withColumn("rn", row_number().over(w))
+      .filter(col("rn") == 1)
+      .drop("rn")
+)
+
+# ── Domain Validation ────────────────────────────────────────────────────────
+df_valid = df_deduped.filter(
+    (col("visit_date") <= current_date()) &
+    (col("amount") >= 0)
+)
+```
+
+---
+
+## Layer 3 — Delta Constraints (Database-Level Hard Stop)
+
+For critical tables I add **Delta table constraints** so bad data physically cannot be written — even from ad-hoc notebooks or other teams running queries outside the pipeline.
+
+```sql
+-- Enforce valid status values
+ALTER TABLE silver.patient_records
+ADD CONSTRAINT valid_status CHECK (status IN ('ACTIVE', 'INACTIVE', 'PENDING'));
+
+-- Enforce non-null business key
+ALTER TABLE silver.patient_records
+ADD CONSTRAINT non_null_patient_id CHECK (patient_id IS NOT NULL);
+```
+
+> Any write that violates a constraint raises an error and the transaction is rolled back automatically — guaranteed by Delta's ACID compliance.
+
+---
+
+## Layer 4 — Reconciliation After Load
+
+After every pipeline run I do a **row count reconciliation** between source and target. For the **SAP → Snowflake migration** in the FinOps PoC, I also did **checksum validation** on financial amounts to ensure no rounding or truncation occurred during transformation.
+
+```python
+source_count = spark.sql("""
+    SELECT COUNT(*) FROM bronze.clinical_events
+    WHERE load_date = current_date()
+""").collect()[0][0]
+
+target_count = spark.sql("""
+    SELECT COUNT(*) FROM silver.patient_records
+    WHERE load_date = current_date()
+""").collect()[0][0]
+
+if source_count != target_count:
+    raise Exception(
+        f"Row count mismatch: source={source_count}, target={target_count}"
+    )
+
+# Checksum validation for financial data
+source_sum = df_source.agg({"amount": "sum"}).collect()[0][0]
+target_sum = df_target.agg({"amount": "sum"}).collect()[0][0]
+
+if abs(source_sum - target_sum) > 0.01:
+    raise Exception(f"Checksum mismatch: source={source_sum}, target={target_sum}")
+```
+
+---
+
+## Layer 5 — Observability & DQ Audit Logging
+
+Quality checks alone aren't enough — you need visibility across runs. I log every pipeline run's quality metrics to a **DQ audit table** in Delta Lake.
+
+```python
+from datetime import datetime
+from pyspark.sql import Row
+
+dq_record = Row(
+    pipeline_name="silver_patient_load",
+    run_timestamp=datetime.now(),
+    source_count=source_count,
+    target_count=target_count,
+    null_count=null_count,
+    status="PASS" if null_count == 0 and source_count == target_count else "FAIL"
+)
+
+dq_log = spark.createDataFrame([dq_record])
+dq_log.write.format("delta").mode("append").saveAsTable("audit.dq_run_log")
+```
+
+This audit table feeds into:
+- **Azure Monitor dashboards** for pipeline health visibility
+- **ADF failure handlers** that trigger email / Teams alerts on any `FAIL` status
+- **RCA investigations** — historical DQ logs make it easy to pinpoint when and where data degraded
+
+---
+
+## Summary Table
+
+| Layer | Where | Technique | Tool |
+|---|---|---|---|
+| 1 | Bronze (Ingestion) | Schema enforcement & controlled evolution | Delta Lake |
+| 2 | Silver (Transform) | Null checks, dedup, domain validation | PySpark |
+| 3 | Silver (Table-level) | Hard constraints — ACID-backed | Delta Constraints |
+| 4 | Post-load | Row count & checksum reconciliation | PySpark / Spark SQL |
+| 5 | Audit | DQ run log + alerting | Delta + Azure Monitor |
+
+---
+
+## Closing Statement for the Interview
+
+> *"So in summary — I don't treat data quality as a single checkpoint. It's a pipeline-wide discipline: enforce schema at entry, apply business rules at Silver, use Delta constraints as a hard stop, reconcile counts after load, and log everything for observability. In eCDP, this approach protected 300+ downstream reports from bad data despite frequent upstream schema changes from Oracle and Salesforce."*
+
+---
+
+*Tailored for Mayuresh Patil | PwC Data Engineering Associate Interview*
 
 ---
 
