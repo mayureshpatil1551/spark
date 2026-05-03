@@ -4,7 +4,7 @@
 ---
 
 # SECTION 1: DATABRICKS & SPARK
-
+ 
 ## Theory Questions
 
 ### 1. Spark Architecture: Driver, Executors, Cluster Manager
