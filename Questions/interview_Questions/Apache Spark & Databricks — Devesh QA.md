@@ -857,6 +857,8 @@ new_records.writeTo("silver.patient_territory_history").append()
 
 ### P7. Read XML into Spark and Load into Hive/Iceberg Tables
 
+```python
+
 data format -->
 <Transactions>
   <Transaction TransactionID="T1" Date="2024-01-01">
@@ -876,7 +878,6 @@ data format -->
 </Transactions>
 
 
-```python
 from pyspark.sql import SparkSession
 from pyspark.sql.functions import col, current_timestamp, lit
 from pyspark.sql.types import *
