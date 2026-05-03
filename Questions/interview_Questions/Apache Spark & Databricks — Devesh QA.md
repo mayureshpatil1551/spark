@@ -857,6 +857,25 @@ new_records.writeTo("silver.patient_territory_history").append()
 
 ### P7. Read XML into Spark and Load into Hive/Iceberg Tables
 
+data format -->
+<Transactions>
+  <Transaction TransactionID="T1" Date="2024-01-01">
+    <Amount Currency="USD">100.5</Amount>
+    <Vendor>
+      <VendorID>V101</VendorID>
+      <VendorName>ABC Corp</VendorName>
+    </Vendor>
+    <LineItems>
+      <LineItem>
+        <ItemCode>I1</ItemCode>
+        <Description>Item 1</Description>
+        <Amount>50.25</Amount>
+      </LineItem>
+    </LineItems>
+  </Transaction>
+</Transactions>
+
+
 ```python
 from pyspark.sql import SparkSession
 from pyspark.sql.functions import col, current_timestamp, lit
