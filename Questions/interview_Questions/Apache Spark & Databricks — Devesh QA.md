@@ -860,6 +860,7 @@ new_records.writeTo("silver.patient_territory_history").append()
 ```python
 from pyspark.sql import SparkSession
 from pyspark.sql.functions import col, current_timestamp, lit
+from pyspark.sql.types import *
 
 spark = SparkSession.builder \
     .appName("AbbVie-XML-to-Iceberg") \
@@ -869,12 +870,42 @@ spark = SparkSession.builder \
 
 # Scenario: Your FinOps PoC — reading financial XML data from S3
 
+xml_schema = StructType([
+
+    # Attributes (_ prefix in spark-xml)
+    StructField("_TransactionID", StringType(), True),
+    StructField("_Date", StringType(), True),
+
+    # Amount struct (value + attribute)
+    StructField("Amount", StructType([
+        StructField("_VALUE", DoubleType(), True),
+        StructField("_Currency", StringType(), True)
+    ]), True),
+
+    # Vendor struct
+    StructField("Vendor", StructType([
+        StructField("VendorID", StringType(), True),
+        StructField("VendorName", StringType(), True)
+    ]), True),
+
+    # LineItems array
+    StructField("LineItems", StructType([
+        StructField("LineItem", ArrayType(
+            StructType([
+                StructField("ItemCode", StringType(), True),
+                StructField("Description", StringType(), True),
+                StructField("Amount", DoubleType(), True)
+            ])
+        ), True)
+    ]), True)
+
+])
 # Read XML file from S3
 xml_df = spark.read \
     .format("xml") \
     .option("rowTag", "Transaction") \
     .option("rootTag", "Transactions") \
-    .option("inferSchema", True) \
+    .schema(xml_schema) \
     .load("s3://abbvie-raw/finops/transactions/*.xml")
 
 xml_df.printSchema()
