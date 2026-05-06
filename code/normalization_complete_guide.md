@@ -14,7 +14,9 @@ Normalization is the process of **organizing a database to reduce data redundanc
 
 ---
 
-## Why Normalization Matters — The 3 Anomalies
+## Why Normalization Matters — The 3 Anomalies 
+
+Anomaly means problem due to poor design of DB.
 
 Before learning the forms, understand WHY we normalize. All problems come from these 3 anomalies.
 
