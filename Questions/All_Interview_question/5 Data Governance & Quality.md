@@ -1151,11 +1151,435 @@ spark.sql("""
         'write.parquet.compression-codec' = 'zstd',
         'write.target-file-size-bytes'    = '536870912',
         'write.sort-order'                = 'patient_id ASC, event_ts ASC',
-        'history.expire.max-snapshot-age-ms' = '604800000
+        'history.expire.max-snapshot-age-ms' = '604800000'
+    )
+""")
+
+# ── Step 2: Migrate in date partitions (parallelisable, resumable) ─────
+def migrate_partition(date_str: str, source_table: str, target_table: str):
+    """
+    Migrate one date partition from Hive to Iceberg.
+    Idempotent — safe to re-run if it fails mid-way.
+    """
+    print(f"Migrating partition: {date_str}")
+
+    df_hive = spark.sql(f"""
+        SELECT * FROM {source_table}
+        WHERE load_date = '{date_str}'
+    """)
+
+    row_count = df_hive.count()
+    if row_count == 0:
+        print(f"  ⚠️ No data for {date_str} — skipping")
+        return 0
+
+    # Repartition for optimal Iceberg file sizes
+    # Target: 512 MB files → roughly 500K-1M rows per partition
+    target_partitions = max(1, row_count // 500_000)
+
+    df_hive.repartition(target_partitions, col("region")) \
+        .writeTo(target_table) \
+        .option("merge-schema", "false") \
+        .overwritePartitions()
+
+    print(f"  ✅ {date_str}: {row_count} rows migrated")
+    return row_count
 
 
+# ── Step 3: Validate — row counts AND checksums ────────────────────────
+def validate_partition(date_str: str, hive_table: str, iceberg_table: str) -> bool:
+    hive_count = spark.sql(f"""
+        SELECT COUNT(*) AS cnt FROM {hive_table}
+        WHERE load_date = '{date_str}'
+    """).collect()[0][0]
 
-Claude is AI and can make mistakes. Please double-check responses.
+    iceberg_count = spark.sql(f"""
+        SELECT COUNT(*) AS cnt FROM {iceberg_table}
+        WHERE event_ts >= '{date_str}' AND event_ts < date_add('{date_str}', 1)
+    """).collect()[0][0]
+
+    # Checksum validation — catch silent data corruption
+    hive_cs = spark.sql(f"""
+        SELECT SUM(HASH(patient_id, territory_id, event_ts)) AS cs
+        FROM {hive_table} WHERE load_date = '{date_str}'
+    """).collect()[0][0]
+
+    iceberg_cs = spark.sql(f"""
+        SELECT SUM(HASH(patient_id, territory_id, event_ts)) AS cs
+        FROM {iceberg_table}
+        WHERE event_ts >= '{date_str}' AND event_ts < date_add('{date_str}', 1)
+    """).collect()[0][0]
+
+    match = (hive_count == iceberg_count) and (hive_cs == iceberg_cs)
+    status = "✅" if match else "❌"
+    print(f"  {status} {date_str}: rows {hive_count}={iceberg_count}, checksum={match}")
+    return match
 
 
+# ── Step 4: Run migration for all dates ───────────────────────────────
+from datetime import date, timedelta
 
+start_date = date(2022, 1, 1)  # Historical data start
+end_date   = date(2024, 3, 14) # Migration cutover date
+migration_errors = []
+
+current = start_date
+while current <= end_date:
+    date_str = current.strftime("%Y-%m-%d")
+    try:
+        count = migrate_partition(
+            date_str,
+            "hive_prod.patient_events",
+            "iceberg.silver.patient_events"
+        )
+        if count > 0:
+            ok = validate_partition(date_str, "hive_prod.patient_events",
+                                    "iceberg.silver.patient_events")
+            if not ok:
+                migration_errors.append(date_str)
+    except Exception as e:
+        print(f"  ❌ Failed {date_str}: {e}")
+        migration_errors.append(date_str)
+    current += timedelta(days=1)
+
+if migration_errors:
+    print(f"\n⚠️ Failed partitions: {migration_errors}")
+else:
+    print(f"\n✅ Full migration complete — no errors")
+
+# ── Step 5: Post-migration compaction ─────────────────────────────────
+# Iceberg migration creates many small files (one per date partition in Hive)
+# Compact to optimal 512 MB files with sort order
+spark.sql("""
+    CALL iceberg.system.rewrite_data_files(
+        table => 'iceberg.silver.patient_events',
+        strategy => 'sort',
+        sort_order => 'patient_id ASC NULLS LAST, event_ts ASC',
+        options => map(
+            'target-file-size-bytes', '536870912',
+            'max-concurrent-file-group-rewrites', '5'
+        )
+    )
+""")
+print("✅ Post-migration compaction complete")
+```
+
+---
+
+**Challenges and how you solved them:**
+
+```
+CHALLENGE 1: Migration took too long (20 TB = weeks at single-thread speed)
+─────────────────────────────────────────────────────────────────────────────
+Problem:  Sequential migration of 700+ date partitions
+Solution: Parallelize across Databricks cluster workers
+          Run 20 parallel Databricks jobs, each handling a date range
+          Idempotent partition write = safe to retry failed ranges
+Result:   Migration completed in 3 days instead of 3 weeks
+
+
+CHALLENGE 2: Validation failures on 12 partitions
+─────────────────────────────────────────────────────────────────────────────
+Problem:  Checksum mismatch on 12 dates — data didn't match Hive
+Root cause: Those partitions had duplicate rows in Hive (known issue)
+           Iceberg MERGE deduplicates, Hive doesn't → counts differ
+Solution: Explicitly dedup those 12 partitions during migration
+          Document known Hive data quality issues in migration log
+
+
+CHALLENGE 3: Hive Metastore couldn't handle Iceberg metadata volume
+─────────────────────────────────────────────────────────────────────────────
+Problem:  25 TB Iceberg table with 500K+ files overwhelmed Hive Metastore
+Root cause: Hive Metastore stores file-level metadata in MySQL
+           Iceberg stores it in its own metadata files on S3
+           But the catalog registration still went through Hive Metastore
+Solution: Moved to Nessie catalog for Iceberg tables
+          Hive Metastore only used for legacy Hive tables
+
+
+CHALLENGE 4: Partition strategy change — old partitions by load_date, want days(event_ts)
+─────────────────────────────────────────────────────────────────────────────
+Problem:  Historical data has different partition column than going-forward data
+Solution: Iceberg partition evolution — declare new partition spec
+          New writes use days(event_ts), old files retain old spec
+          Iceberg readers handle both transparently ✅
+
+
+CHALLENGE 5: Downstream query breakage after cutover
+─────────────────────────────────────────────────────────────────────────────
+Problem:  Queries that used WHERE load_date = '...' stopped pruning correctly
+          (Hive column, not needed in Iceberg with hidden partitioning)
+Solution: Global search for load_date filter patterns in all notebooks
+          Replace with event_ts range filter — 2 days of updates across team
+          Add backward-compat view with load_date as computed column for legacy queries
+```
+
+---
+
+### Scenario 2. How Did You Ensure Schema Consistency Across Layers?
+
+**Context:** Multiple source systems (Veeva, Oracle, Smartsheet, REST APIs) feeding into Bronze → Silver → Gold. How do you prevent schema drift and inconsistency between layers?
+
+---
+
+**The Problem:**
+
+```
+Source schema drift scenarios:
+  Veeva API: adds field "preferred_language" in v3.2 release
+  Oracle:    changes territory_id from INT to VARCHAR(20)
+  Smartsheet: renames column "rep_code" to "rep_id"
+  REST API:  changes timestamp format from ISO8601 to epoch seconds
+
+Without controls → Bronze absorbs silently → Silver breaks → Gold wrong
+With controls    → detected at boundary → alert → deliberate migration
+```
+
+---
+
+**Schema Consistency Architecture:**
+
+```python
+# ── Schema Registry — single source of truth ──────────────────────────
+# Store expected schemas as code (version-controlled in Git)
+# schemas/silver_patient_master.json
+
+SILVER_PATIENT_MASTER_SCHEMA = {
+    "fields": [
+        {"name": "patient_id",     "type": "string",   "nullable": False},
+        {"name": "territory_id",   "type": "string",   "nullable": False},
+        {"name": "region",         "type": "string",   "nullable": False},
+        {"name": "status",         "type": "string",   "nullable": True},
+        {"name": "age_group",      "type": "string",   "nullable": True},
+        {"name": "effective_from", "type": "timestamp","nullable": False},
+        {"name": "effective_to",   "type": "timestamp","nullable": False},
+        {"name": "is_current",     "type": "boolean",  "nullable": False},
+        {"name": "record_hash",    "type": "string",   "nullable": False}
+    ],
+    "version": "2.1.0",
+    "last_updated": "2024-03-01"
+}
+
+
+# ── Schema Validation Function ────────────────────────────────────────
+from pyspark.sql.types import StructType, StructField, StringType, TimestampType, BooleanType
+
+def validate_schema(df, expected_schema: dict, table_name: str,
+                    allow_extra_cols: bool = False):
+    """
+    Validate DataFrame schema against expected schema definition.
+    Raises detailed exception with field-level diff on mismatch.
+    """
+    actual_fields   = {f.name: f.dataType.simpleString() for f in df.schema.fields}
+    expected_fields = {f["name"]: f["type"] for f in expected_schema["fields"]}
+
+    missing  = set(expected_fields.keys()) - set(actual_fields.keys())
+    extra    = set(actual_fields.keys())   - set(expected_fields.keys())
+    type_mismatch = {
+        name: f"expected {expected_fields[name]}, got {actual_fields[name]}"
+        for name in expected_fields
+        if name in actual_fields and actual_fields[name] != expected_fields[name]
+    }
+
+    issues = []
+    if missing:
+        issues.append(f"MISSING columns: {missing}")
+    if extra and not allow_extra_cols:
+        issues.append(f"EXTRA columns (schema evolution?): {extra}")
+    if type_mismatch:
+        issues.append(f"TYPE MISMATCH: {type_mismatch}")
+
+    if issues:
+        error_msg = f"Schema validation failed for {table_name} (v{expected_schema['version']}):\n" \
+                    + "\n".join(f"  - {i}" for i in issues)
+        raise Exception(error_msg)
+
+    print(f"✅ Schema validated: {table_name} matches v{expected_schema['version']}")
+
+
+# ── Schema Drift Detection — compare current vs expected ─────────────
+def detect_schema_drift(table_name: str, expected_schema: dict):
+    """
+    Compare live Iceberg table schema against expected schema definition.
+    Run as a daily job to catch drift before pipelines break.
+    """
+    df = spark.read.format("iceberg").load(table_name).limit(0)  # Read schema only
+    try:
+        validate_schema(df, expected_schema, table_name, allow_extra_cols=False)
+        return True
+    except Exception as e:
+        print(f"⚠️ Schema drift detected in {table_name}: {e}")
+        # Log to monitoring table
+        spark.createDataFrame([{
+            "table":        table_name,
+            "issue":        str(e),
+            "detected_ts":  datetime.now().isoformat(),
+            "resolved":     False
+        }]).writeTo("iceberg.monitoring.schema_drift_log").append()
+        return False
+
+
+# ── Schema Conformance — cast Bronze types to Silver contract ─────────
+def conform_schema(df, target_schema: dict):
+    """
+    Cast and rename columns to match the Silver contract.
+    Handles: type widening, column renaming, adding nulls for missing optional cols.
+    """
+    from pyspark.sql.functions import col, lit, to_timestamp
+    type_map = {
+        "string": "string",
+        "timestamp": "timestamp",
+        "boolean": "boolean",
+        "int": "int",
+        "bigint": "long",
+        "decimal(18,2)": "decimal(18,2)"
+    }
+
+    result = df
+    for field in target_schema["fields"]:
+        name     = field["name"]
+        expected = field["type"]
+        nullable = field["nullable"]
+
+        if name not in [f.name for f in df.schema.fields]:
+            if nullable:
+                result = result.withColumn(name, lit(None).cast(expected))
+            # Missing non-nullable column → already caught by validate_schema
+        else:
+            actual = df.schema[name].dataType.simpleString()
+            if actual != expected:
+                # Type cast (safe widening only)
+                result = result.withColumn(name, col(name).cast(expected))
+
+    # Select only expected columns in expected order
+    expected_cols = [f["name"] for f in target_schema["fields"]]
+    result = result.select([c for c in expected_cols if c in result.columns])
+    return result
+
+
+# ── Apply at every Bronze → Silver boundary ───────────────────────────
+df_bronze = spark.read.format("iceberg").load("iceberg.bronze.veeva_patients_raw") \
+    .filter(col("_ingest_ts").cast("date") == load_date)
+
+# Step 1: Detect if Bronze schema matches what Silver expects
+# Bronze uses mergeSchema — may have extra/different columns
+validate_schema(
+    df_bronze,
+    SILVER_PATIENT_MASTER_SCHEMA,
+    "bronze.veeva_patients_raw",
+    allow_extra_cols=True   # Bronze may have extra audit cols
+)
+
+# Step 2: Conform Bronze schema to Silver contract
+df_conformed = conform_schema(df_bronze, SILVER_PATIENT_MASTER_SCHEMA)
+
+# Step 3: Validate conformed schema before Silver write
+validate_schema(df_conformed, SILVER_PATIENT_MASTER_SCHEMA,
+                "pre-silver-write", allow_extra_cols=False)
+
+# Step 4: Write to Silver — strict enforcement (no mergeSchema)
+df_conformed.writeTo("iceberg.silver.patient_master").append()
+print("✅ Schema-consistent write to Silver complete")
+```
+
+---
+
+**Schema change process — controlled evolution:**
+
+```
+When Veeva API adds new field "preferred_language":
+
+Day 1: Pipeline Fails at Silver boundary
+  → validate_schema detects extra column "preferred_language" in Bronze
+  → Exception raised: "EXTRA columns (schema evolution?): {'preferred_language'}"
+  → ADF sends alert: "Silver validation failed — schema drift detected"
+
+Day 1-2: Review and Decision
+  → Is this field needed in Silver? → Yes, for patient segmentation
+  → Impact analysis: Gold patient_summary does NOT use it → safe to add
+  → Databricks ANALYZE → power BI uses Gold, not Silver directly → safe
+
+Day 2: Controlled Migration
+  1. Update schema registry in Git:
+     Add {"name": "preferred_language", "type": "string", "nullable": True}
+     Bump version: "2.1.0" → "2.2.0"
+  2. ALTER TABLE iceberg.silver.patient_master ADD COLUMN preferred_language STRING
+  3. Backfill existing rows: UPDATE SET preferred_language = NULL (Iceberg default)
+  4. Update conform_schema to map Bronze field → Silver field
+  5. PR review + merge → CI/CD deploys updated schema registry + pipeline code
+  6. Resume pipeline → Bronze field now passes through to Silver ✅
+  7. Log: schema_change_log: "v2.1.0 → v2.2.0, added preferred_language, 2024-03-16"
+```
+
+---
+
+## 📊 Quick Reference Cheat Sheet
+
+### DQ Check Placement by Layer
+
+```
+BRONZE (Raw intake):
+  ✅ Schema checks:          column count, column names present
+  ✅ Not-null on PK:         reject records with no primary key
+  ✅ Freshness check:        data actually arrived from source
+  ❌ Business rule checks:   too early — types not cast yet
+
+SILVER (Cleansed):
+  ✅ All Bronze checks       +
+  ✅ Referential integrity:  FK must exist in dimension tables
+  ✅ Domain/allowed values:  status in ('ACTIVE','INACTIVE','PENDING')
+  ✅ Range checks:           age 0-120, duration >= 0
+  ✅ Uniqueness on PK:       no duplicate patient_ids per current version
+  ✅ Type validity:          numeric fields actually parse as numbers
+
+GOLD (Analytics):
+  ✅ Aggregate reasonableness: total_patients not zero, not negative
+  ✅ Completeness:             all expected territories present
+  ✅ Trend check:              count within 20% of yesterday (sudden drop = alert)
+```
+
+### Iceberg Partition Transform Quick Reference
+
+```
+Transform         Example              Best For
+─────────────────────────────────────────────────────────────
+years(ts)         2024                 Long-range archival queries
+months(ts)        2024-01              Monthly reporting
+days(ts)          2024-01-15           Daily batch ← most common
+hours(ts)         2024-01-15-08        High-frequency streaming
+bucket(N, col)    bucket(100, id)      High-cardinality keys
+truncate(col, L)  truncate(drug_cd, 3) String prefix grouping
+identity(col)     region               Low-cardinality categorical
+```
+
+### Delta vs Iceberg — When to Choose
+
+```
+Choose Delta Lake when:
+  → Entire stack is Databricks / Azure-only
+  → Need tightest Structured Streaming + Delta integration
+  → Team already invested in Delta ecosystem
+
+Choose Apache Iceberg when:
+  → Need multi-engine: Spark + Trino + Flink + Snowflake on same data
+  → 20+ TB tables where metadata performance matters
+  → Need hidden partitioning (change partition spec without data rewrite)
+  → Open format, vendor-neutral strategy
+  → AbbVie scenario ← this is you ✅
+```
+
+### Schema Consistency Rules by Layer
+
+```
+Bronze:   mergeSchema=true    ← absorb source changes silently
+Silver:   mergeSchema=false   ← reject unexpected changes, alert
+Gold:     mergeSchema=false   ← strictest, coordinate with BI consumers
+
+Schema change process:
+  Alert → Review → Impact analysis → Git PR → ALTER TABLE → Backfill → Resume
+```
+
+---
+
+*Prepared for: Mayuresh Uttam Patil | Data Engineer Interview Prep*
+*Experience: Apache Iceberg, PySpark, GDPR/HIPAA, Data Quality, AbbVie eCDP*
