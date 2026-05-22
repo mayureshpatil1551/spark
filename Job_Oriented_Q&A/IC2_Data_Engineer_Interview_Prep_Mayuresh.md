@@ -692,6 +692,8 @@ def test_deduplication(spark):
 
 > *"An idempotent pipeline produces the same result whether run once or multiple times. It's safe to re-run after failures.*
 >
+> Idempotency means running the same pipeline multiple times gives the same final result without creating duplicate or inconsistent data.
+> 
 > *I achieve this using MERGE INTO instead of INSERT — so re-running updates existing records instead of duplicating them. For partition overwrites, I use `replaceWhere` on specific partition columns instead of overwriting the whole table.*
 >
 > *This is critical in production — ADF retries failed pipelines automatically, so idempotency prevents data corruption on retries."*
