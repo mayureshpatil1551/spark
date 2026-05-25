@@ -1100,6 +1100,632 @@ sf_token      = dbutils.secrets.get(scope="abbvie-kv", key="salesforce-token")
 > Never hardcode credentials in notebooks, even temporarily. Notebooks get committed to Git — credentials exposed in history forever.
 
 ---
+# 🎯 Azure Interview Answer Scripts — C6, C7, C8, C9
+> **Mayuresh Patil | Azure Cloud & CI/CD Section**
+> Short · Simple · Speakable · Project-Grounded
+
+---
+
+## C6. What is ADLS Gen2 and how does it differ from regular blob storage?
+
+**One-liner:** ADLS Gen2 is Azure's enterprise data lake storage — it adds a hierarchical file system, fine-grained security, and big data performance on top of standard Azure Blob Storage.
+
+### Answer Script
+
+> "Azure Blob Storage is general-purpose object storage — good for storing files, backups, and static assets. ADLS Gen2 is built on top of Blob Storage but adds features specifically for big data workloads.
+>
+> The three key differences:
+>
+> **1. Hierarchical Namespace (HNS):**
+> Regular Blob Storage is flat — everything is just an object with a key. ADLS Gen2 has real directories and folders like a file system. This matters because operations like renaming a folder are atomic and O(1) — not O(n) like in flat Blob Storage.
+>
+> **2. Fine-grained Access Control:**
+> ADLS Gen2 supports POSIX-compliant ACLs — you can set permissions at the file level, not just the container level. Regular Blob only supports RBAC at the container level.
+>
+> **3. Performance for Analytics:**
+> ADLS Gen2 is optimized for parallel reads — used by Spark, ADF, Databricks, HDInsight natively. It supports the `abfss://` protocol for secure access.
+
+```python
+# ADLS Gen2 path in Databricks (uses abfss:// protocol)
+adls_path = "abfss://container@storageaccount.dfs.core.windows.net/data/patients/"
+
+# Regular Blob Storage path (uses wasbs:// protocol)
+blob_path = "wasbs://container@storageaccount.blob.core.windows.net/data/patients/"
+
+# Reading from ADLS Gen2 in PySpark
+df = spark.read.format("delta").load(adls_path)
+```
+
+> In my AbbVie project, all Databricks Delta Lake tables are stored on ADLS Gen2 — the hierarchical namespace makes directory operations fast when compacting or reorganizing partitions."
+
+---
+
+### Comparison Table
+
+| Feature | Azure Blob Storage | ADLS Gen2 |
+|---|---|---|
+| Namespace | Flat (key-value objects) | Hierarchical (real folders) |
+| Folder rename | O(n) — copies all objects | O(1) — atomic, instant |
+| Access control | Container-level RBAC | File/folder-level ACLs + RBAC |
+| Protocol | `wasbs://` | `abfss://` (secure) |
+| Big data optimized | Limited | ✅ Native Spark, ADF, Databricks |
+| Cost | Same pricing | Same pricing (it's built on Blob) |
+| Use case | File storage, backups | Data Lake, Lakehouse, Analytics |
+
+---
+
+### Strong Interview One-Liner
+> *"ADLS Gen2 is Blob Storage with a file system brain — hierarchical namespace, POSIX ACLs, and analytics-grade performance."*
+
+### Common Mistake to Avoid
+> Don't say ADLS Gen2 is a completely separate storage service. It's Azure Blob Storage with the hierarchical namespace feature enabled — same underlying infrastructure, upgraded capabilities.
+
+---
+
+---
+
+## C7. When would you use Azure Synapse Analytics over Databricks?
+
+**One-liner:** Use Synapse when you need a unified workspace combining SQL data warehouse, Spark, and Power BI in one place; use Databricks when you need advanced Spark optimization, MLflow, or best-in-class data engineering.
+
+### Answer Script
+
+> "Both are Azure big data platforms, but they serve slightly different primary use cases.
+>
+> **Choose Azure Synapse when:**
+> - Your team is SQL-first — analysts who prefer T-SQL over PySpark
+> - You need a dedicated SQL pool (MPP data warehouse) for BI workloads
+> - You want one unified workspace for SQL, Spark, pipelines, and Power BI integration
+> - The workload is primarily structured data reporting — not complex ML or data engineering
+>
+> **Choose Databricks when:**
+> - You need best-in-class PySpark performance with advanced optimizations
+> - You're building ML pipelines — MLflow is native, not bolted on
+> - You need Unity Catalog for enterprise governance
+> - Your team is data engineering or ML-heavy
+> - You need Delta Live Tables or DLT for declarative pipeline development
+
+```
+                Synapse                          Databricks
+         ┌──────────────────┐            ┌──────────────────────┐
+         │ SQL Pool (MPP)   │            │ Advanced Spark        │
+         │ Serverless SQL   │            │ Delta Live Tables     │
+         │ Spark (built-in) │            │ MLflow / ML           │
+         │ Power BI link    │            │ Unity Catalog         │
+         │ ADF integration  │            │ Delta Lake optimized  │
+         └──────────────────┘            └──────────────────────┘
+         Best: SQL teams, BI reporting   Best: DE + ML teams
+```
+
+> At AbbVie, we use Databricks — our workloads are data engineering heavy (Iceberg, PySpark, Medallion pipelines, 10M+ records daily). The advanced Spark tuning and Unity Catalog were more important for us than Synapse's SQL pool."
+
+---
+
+### Decision Guide
+
+| Scenario | Use |
+|---|---|
+| SQL analysts running T-SQL reports | Synapse |
+| Data engineers building PySpark pipelines | Databricks |
+| Building ML models at scale | Databricks |
+| BI dashboard connected to data warehouse | Synapse |
+| Complex ETL with Delta Live Tables | Databricks |
+| Mixed team — SQL + BI + some Spark | Synapse (unified workspace) |
+| Enterprise governance + Unity Catalog | Databricks |
+
+---
+
+### Strong Interview One-Liner
+> *"Synapse if you're SQL-first and BI-focused; Databricks if you're PySpark-first and data engineering or ML-focused."*
+
+### Common Mistake to Avoid
+> Don't say one is strictly better. Both are valid choices. The answer always depends on the team's skill set and primary workload type.
+
+---
+
+---
+
+## C8. ⭐ How would you implement a CI/CD pipeline for Databricks notebooks using Azure DevOps?
+
+**One-liner:** Git branching strategy + automated pytest on PR + Azure DevOps YAML pipeline deploys notebooks and job configs to Databricks on merge to main.
+
+### Answer Script
+
+> "My CI/CD setup for Databricks on Azure DevOps has four components: version control, automated testing, deployment pipeline, and secrets management.
+
+**Step 1 — Git Branching Strategy:**
+```
+main        → Production (protected, requires PR + review)
+  └── dev   → Integration (features merge here first)
+        └── feature/oracle-incremental-load
+        └── feature/salesforce-pagination
+        └── hotfix/schema-drift-fix
+```
+
+**Step 2 — Unit Tests (run on every PR):**
+```python
+# tests/test_dq_checks.py
+import pytest
+from pyspark.sql import SparkSession
+from src.dq_checks import apply_null_check
+
+@pytest.fixture(scope="session")
+def spark():
+    return SparkSession.builder.master("local[2]") \
+           .appName("test").getOrCreate()
+
+def test_null_patient_id_removed(spark):
+    data = [(1, "Alice"), (None, "Bob"), (3, "Charlie")]
+    df   = spark.createDataFrame(data, ["patient_id", "name"])
+    result = apply_null_check(df, "patient_id")
+    assert result.count() == 2
+    assert result.filter("patient_id IS NULL").count() == 0
+```
+
+**Step 3 — Azure DevOps YAML Pipeline:**
+```yaml
+# azure-pipelines.yml
+trigger:
+  branches:
+    include:
+      - main
+      - dev
+
+variables:
+  - group: databricks-secrets  # Linked to Azure Key Vault
+
+stages:
+
+# ─── CI Stage: Run Tests on PR ───
+- stage: Test
+  jobs:
+  - job: RunUnitTests
+    pool:
+      vmImage: ubuntu-latest
+    steps:
+    - task: UsePythonVersion@0
+      inputs:
+        versionSpec: '3.9'
+
+    - script: |
+        pip install pytest pyspark delta-spark
+      displayName: 'Install dependencies'
+
+    - script: |
+        pytest tests/ -v --junitxml=test-results.xml
+      displayName: 'Run unit tests'
+
+    - task: PublishTestResults@2
+      inputs:
+        testResultsFiles: 'test-results.xml'
+        testRunTitle: 'PySpark Unit Tests'
+
+# ─── CD Stage: Deploy to Databricks (only on main merge) ───
+- stage: Deploy
+  condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+  jobs:
+  - job: DeployToDatabricks
+    pool:
+      vmImage: ubuntu-latest
+    steps:
+    - script: |
+        pip install databricks-cli
+      displayName: 'Install Databricks CLI'
+
+    - script: |
+        # Configure Databricks CLI using Key Vault secrets
+        databricks configure --token <<EOF
+        $(DATABRICKS_HOST)
+        $(DATABRICKS_TOKEN)
+        EOF
+      displayName: 'Configure Databricks CLI'
+      env:
+        DATABRICKS_HOST: $(DATABRICKS_HOST)
+        DATABRICKS_TOKEN: $(DATABRICKS_TOKEN)
+
+    - script: |
+        # Deploy notebooks to Databricks workspace
+        databricks workspace import_dir \
+          ./notebooks \
+          /Shared/production \
+          --overwrite \
+          --language PYTHON
+      displayName: 'Deploy Notebooks'
+
+    - script: |
+        # Update Databricks Job configuration
+        databricks jobs reset \
+          --job-id $(JOB_ID_ORACLE_INGESTION) \
+          --json-file ./job_configs/oracle_ingestion_job.json
+
+        databricks jobs reset \
+          --job-id $(JOB_ID_SALESFORCE_INGESTION) \
+          --json-file ./job_configs/salesforce_ingestion_job.json
+      displayName: 'Update Job Configs'
+
+    - script: |
+        # Optional: Trigger a smoke test job run
+        run_id=$(databricks runs submit \
+          --json-file ./job_configs/smoke_test_job.json \
+          | python -c "import sys,json; print(json.load(sys.stdin)['run_id'])")
+        echo "Smoke test run_id: $run_id"
+      displayName: 'Run Smoke Test'
+```
+
+**Step 4 — Secrets Management:**
+```
+Azure Key Vault
+  ├── DATABRICKS_HOST   → https://adb-xxx.azuredatabricks.net
+  ├── DATABRICKS_TOKEN  → dapi_xxx
+  ├── JOB_ID_ORACLE     → 12345
+  └── JOB_ID_SALESFORCE → 12346
+
+Azure DevOps Variable Group → linked to Key Vault
+→ Pipeline reads secrets at runtime, never stored in YAML
+```
+
+> This setup means: every PR triggers automated tests, every merge to main auto-deploys to production Databricks. No manual notebook uploads. No environment drift."
+
+---
+
+### Environment Promotion Flow
+
+```
+Developer pushes feature branch
+         ↓
+  PR opened → CI runs pytest
+         ↓
+  PR approved + merged to dev
+         ↓
+  Deploy to DEV Databricks workspace (auto)
+         ↓
+  Integration test passes
+         ↓
+  PR from dev → main
+         ↓
+  Deploy to PRODUCTION Databricks workspace (auto)
+         ↓
+  Smoke test job runs to confirm deployment
+```
+
+---
+
+### Folder Structure
+
+```
+project/
+├── notebooks/
+│   ├── bronze/
+│   │   └── oracle_ingestion.py
+│   ├── silver/
+│   │   └── patient_cleaning.py
+│   └── gold/
+│       └── revenue_aggregation.py
+├── src/
+│   ├── dq_checks.py
+│   ├── ingestion_utils.py
+│   └── config_loader.py
+├── tests/
+│   ├── test_dq_checks.py
+│   └── test_ingestion_utils.py
+├── job_configs/
+│   ├── oracle_ingestion_job.json
+│   └── salesforce_ingestion_job.json
+├── azure-pipelines.yml
+└── requirements.txt
+```
+
+---
+
+### Strong Interview One-Liner
+> *"CI/CD for Databricks = automated pytest on every PR + automated notebook deployment on every merge to main — zero manual steps in production."*
+
+### Common Mistake to Avoid
+> Never store `DATABRICKS_TOKEN` or secrets in the YAML file or in notebook code. Always use Azure DevOps Variable Groups linked to Key Vault. Secrets in YAML get committed to Git history — exposed permanently.
+
+---
+
+---
+
+## C9. How did you automate infrastructure deployment using Python SQL generation scripts?
+
+**One-liner:** Built a Jinja2-template-based Python script that dynamically generated 300+ SQL configuration files from a single YAML config — eliminating 15+ hours/week of manual setup.
+
+### Answer Script
+
+> "Before my automation, the team maintained 300+ SQL scripts manually — table DDLs, views, stored procedures, configuration tables — one set per environment (Dev, Validation, Production). Every change meant manually editing scripts across 3 environments. Error-prone, slow, 15+ hours per week.
+>
+> I built a metadata-driven SQL generation framework in Python."
+
+---
+
+### The Problem
+
+```
+Before automation:
+  Dev environment:     300 SQL scripts (manual)
+  Validation env:      300 SQL scripts (manually copied + edited)
+  Production env:      300 SQL scripts (manually copied + edited)
+  
+  Total: 900 scripts to maintain
+  Risk: One missed edit = environment mismatch = production bug
+  Time: 15+ hours/week just for config management
+```
+
+---
+
+### The Solution
+
+**Step 1 — YAML Config (single source of truth):**
+```yaml
+# table_configs.yaml
+environments:
+  dev:
+    schema: "pharma_dev"
+    s3_path: "s3://abbvie-dev/iceberg/"
+  validation:
+    schema: "pharma_val"
+    s3_path: "s3://abbvie-val/iceberg/"
+  production:
+    schema: "pharma_prod"
+    s3_path: "s3://abbvie-prod/iceberg/"
+
+tables:
+  - name: PATIENT_RECORDS
+    primary_key: patient_id
+    partition_col: record_date
+    columns:
+      - { name: patient_id,   type: STRING,    nullable: false }
+      - { name: facility_id,  type: STRING,    nullable: false }
+      - { name: record_date,  type: DATE,      nullable: false }
+      - { name: diagnosis,    type: STRING,    nullable: true  }
+      - { name: updated_at,   type: TIMESTAMP, nullable: true  }
+
+  - name: FACILITY_MASTER
+    primary_key: facility_id
+    partition_col: load_date
+    columns:
+      - { name: facility_id,   type: STRING, nullable: false }
+      - { name: facility_name, type: STRING, nullable: true  }
+      - { name: region,        type: STRING, nullable: true  }
+```
+
+**Step 2 — Jinja2 SQL Templates:**
+```sql
+-- templates/create_table.sql.j2
+CREATE TABLE IF NOT EXISTS {{ schema }}.{{ table.name }} (
+    {% for col in table.columns %}
+    {{ col.name }} {{ col.type }}{% if not col.nullable %} NOT NULL{% endif %}{% if not loop.last %},{% endif %}
+
+    {% endfor %}
+)
+USING iceberg
+PARTITIONED BY ({{ table.partition_col }})
+LOCATION '{{ s3_path }}{{ table.name | lower }}/'
+TBLPROPERTIES (
+    'write.format.default' = 'parquet',
+    'write.parquet.compression-codec' = 'snappy'
+);
+```
+
+```sql
+-- templates/create_audit_view.sql.j2
+CREATE OR REPLACE VIEW {{ schema }}.{{ table.name }}_AUDIT_VW AS
+SELECT
+    {{ table.primary_key }},
+    {% for col in table.columns %}
+    {{ col.name }}{% if not loop.last %},{% endif %}
+
+    {% endfor %}
+    current_timestamp() AS view_generated_at
+FROM {{ schema }}.{{ table.name }}
+WHERE updated_at >= CURRENT_DATE - INTERVAL 30 DAYS;
+```
+
+**Step 3 — Python Generation Engine:**
+```python
+import yaml
+from jinja2 import Environment, FileSystemLoader
+import os
+import logging
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+def generate_sql_scripts(config_path: str, target_env: str, output_dir: str):
+    """
+    Generate all SQL scripts for a given environment from YAML config.
+    
+    Args:
+        config_path: Path to YAML config file
+        target_env:  Environment name (dev / validation / production)
+        output_dir:  Where to write generated SQL files
+    """
+    # Load config
+    with open(config_path, "r") as f:
+        config = yaml.safe_load(f)
+
+    env_config = config["environments"][target_env]
+    schema     = env_config["schema"]
+    s3_path    = env_config["s3_path"]
+
+    # Setup Jinja2 template engine
+    jinja_env = Environment(
+        loader=FileSystemLoader("templates/"),
+        trim_blocks=True,
+        lstrip_blocks=True
+    )
+
+    # Generate scripts for each table
+    generated_files = []
+    for table in config["tables"]:
+        table_name = table["name"]
+        logger.info(f"Generating scripts for {table_name} in {target_env}...")
+
+        # 1. CREATE TABLE script
+        create_template = jinja_env.get_template("create_table.sql.j2")
+        create_sql = create_template.render(
+            schema=schema,
+            s3_path=s3_path,
+            table=table
+        )
+        create_file = os.path.join(output_dir, target_env, f"CREATE_{table_name}.sql")
+        _write_file(create_file, create_sql)
+        generated_files.append(create_file)
+
+        # 2. AUDIT VIEW script
+        view_template = jinja_env.get_template("create_audit_view.sql.j2")
+        view_sql = view_template.render(
+            schema=schema,
+            table=table
+        )
+        view_file = os.path.join(output_dir, target_env, f"VIEW_{table_name}_AUDIT.sql")
+        _write_file(view_file, view_sql)
+        generated_files.append(view_file)
+
+    logger.info(f"✅ Generated {len(generated_files)} SQL files for {target_env}")
+    return generated_files
+
+
+def _write_file(path: str, content: str):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w") as f:
+        f.write(content)
+
+
+def execute_scripts(output_dir: str, env: str, spark):
+    """Execute all generated SQL scripts for an environment."""
+    sql_dir = os.path.join(output_dir, env)
+    sql_files = sorted(os.listdir(sql_dir))  # Sorted ensures CREATE before VIEW
+
+    for sql_file in sql_files:
+        file_path = os.path.join(sql_dir, sql_file)
+        with open(file_path, "r") as f:
+            sql = f.read()
+        try:
+            spark.sql(sql)
+            logger.info(f"✅ Executed: {sql_file}")
+        except Exception as e:
+            logger.error(f"❌ Failed: {sql_file} | Error: {e}")
+            raise
+
+
+# ─── Main Entry Point ───
+if __name__ == "__main__":
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Generate SQL scripts for environment setup")
+    parser.add_argument("--env",    required=True, help="dev | validation | production")
+    parser.add_argument("--config", default="config/table_configs.yaml")
+    parser.add_argument("--output", default="generated_sql/")
+    parser.add_argument("--execute", action="store_true", help="Execute scripts after generation")
+    args = parser.parse_args()
+
+    files = generate_sql_scripts(args.config, args.env, args.output)
+
+    if args.execute:
+        from pyspark.sql import SparkSession
+        spark = SparkSession.builder.appName("InfraSetup").getOrCreate()
+        execute_scripts(args.output, args.env, spark)
+```
+
+**Step 4 — Run it:**
+```bash
+# Generate scripts for production
+python generate_sql.py --env production --config config/table_configs.yaml --output generated_sql/
+
+# Generate AND execute for dev
+python generate_sql.py --env dev --execute
+
+# Output structure:
+# generated_sql/
+#   dev/
+#     CREATE_PATIENT_RECORDS.sql
+#     VIEW_PATIENT_RECORDS_AUDIT.sql
+#     CREATE_FACILITY_MASTER.sql
+#     ...
+#   production/
+#     (same files, different schema + S3 paths)
+```
+
+**Step 5 — Integrate into CI/CD:**
+```yaml
+# azure-pipelines.yml — infrastructure setup stage
+- stage: SetupInfrastructure
+  jobs:
+  - job: GenerateAndRunSQL
+    steps:
+    - script: |
+        pip install pyyaml jinja2 pyspark
+        python generate_sql.py \
+          --env $(TARGET_ENV) \
+          --config config/table_configs.yaml \
+          --execute
+      displayName: 'Generate and execute SQL configs'
+      env:
+        TARGET_ENV: $(Build.SourceBranch)  # dev, validation, or production
+```
+
+---
+
+### Before vs After
+
+```
+BEFORE:                            AFTER:
+──────────────────────────────     ──────────────────────────────────
+300 scripts × 3 environments       1 YAML config + templates
+= 900 files to maintain            = Auto-generate 900 files
+
+Manual copy-paste per change        1 command:
+15+ hours/week                      python generate_sql.py --env prod
+
+Frequent typos, missed updates      Zero copy-paste errors
+Environment drift common            Environments always in sync
+
+No version control on SQL           YAML + templates in Git
+Hard to audit changes               Diff shows exactly what changed
+```
+
+---
+
+### Strong Interview One-Liner
+> *"Config-driven + template-based SQL generation — one YAML file, one command, consistent environments everywhere — eliminated 15+ hours/week of manual work and human error."*
+
+### Common Mistake to Avoid
+> Don't hardcode environment-specific values (schema names, S3 paths) in templates. All environment differences should live in the YAML config — templates stay generic and reusable.
+
+---
+
+---
+
+## 📋 Quick Revision Summary — C6 to C9
+
+```
+┌──────────────────────────────────────────────────────────────────────────┐
+│  C6  ADLS Gen2                                                           │
+│  = Blob Storage + Hierarchical Namespace + POSIX ACLs + Analytics perf  │
+│  Protocol: abfss://   |   Key benefit: atomic folder ops, ACL at file   │
+├──────────────────────────────────────────────────────────────────────────┤
+│  C7  Synapse vs Databricks                                               │
+│  Synapse  → SQL-first, BI teams, MPP data warehouse, Power BI           │
+│  Databricks → PySpark-first, DE + ML, Unity Catalog, DLT, Delta Lake    │
+│  Answer: "Depends on team skills and primary workload type"              │
+├──────────────────────────────────────────────────────────────────────────┤
+│  C8  CI/CD for Databricks                                                │
+│  Git branching → pytest on PR → YAML pipeline → deploy notebooks        │
+│  Secrets: Azure DevOps Variable Group linked to Key Vault               │
+│  NEVER store tokens in YAML or code                                     │
+├──────────────────────────────────────────────────────────────────────────┤
+│  C9  Python SQL Automation                                               │
+│  YAML config → Jinja2 templates → Python generates 900 SQL files        │
+│  1 source of truth → zero copy-paste → 15+ hrs/week saved              │
+│  Integrated into Azure DevOps CI/CD pipeline                            │
+└──────────────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+*Azure Interview Scripts — C6/C7/C8/C9 | Mayuresh Patil | May 2026*
 
 ### C8. ⭐ CI/CD for Databricks — Azure DevOps
 
