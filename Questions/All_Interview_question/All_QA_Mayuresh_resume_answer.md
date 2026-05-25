@@ -1808,7 +1808,14 @@ df_incremental = spark.read.jdbc(
 > *Third, **schema drift**. Salesforce objects occasionally had new fields added. I handled this with `mergeSchema=true` when writing to Iceberg so new fields are captured without pipeline failure."*
 
 ```python
-response = requests.post(
+import requests
+import time
+
+# -----------------------------
+# Step 1: Salesforce Authentication
+# -----------------------------
+
+auth_response = requests.post(
     auth_url,
     data={
         "grant_type": "password",
@@ -1819,37 +1826,99 @@ response = requests.post(
     }
 )
 
-access_token = response.json()["access_token"]
+auth_response.raise_for_status()
+
+auth_data = auth_response.json()
+
+access_token = auth_data["access_token"]
+instance_url = auth_data["instance_url"]
+
+# -----------------------------
+# Step 2: Prepare Headers
+# -----------------------------
 
 headers = {
-    "Authorization": f"Bearer {access_token}"
+    "Authorization": f"Bearer {access_token}",
+    "Content-Type": "application/json"
 }
 
-response = requests.get(
-    f"{base_url}/services/data/v58.0/query",
+# -----------------------------
+# Step 3: Salesforce Paginated API with Retry Logic
+# -----------------------------
+
+def fetch_salesforce_records(
+    soql_query,
+    headers,
+    instance_url,
+    api_version="v58.0",
+    max_retries=3
+):
+    records = []
+
+    # Initial query endpoint
+    next_url = (
+        f"{instance_url}/services/data/"
+        f"{api_version}/query?q={soql_query}"
+    )
+
+    while next_url:
+
+        for attempt in range(max_retries):
+
+            try:
+                response = requests.get(next_url, headers=headers)
+
+                # Retry for rate limit
+                if response.status_code == 429:
+                    wait_time = 2 ** attempt
+                    print(f"Rate limited. Retrying in {wait_time} sec...")
+                    time.sleep(wait_time)
+                    continue
+
+                response.raise_for_status()
+                break
+
+            except requests.exceptions.RequestException as e:
+
+                if attempt == max_retries - 1:
+                    raise Exception(f"API request failed: {e}")
+
+                wait_time = 2 ** attempt
+                print(f"Retrying in {wait_time} sec...")
+                time.sleep(wait_time)
+
+        data = response.json()
+
+        # Append records
+        records.extend(data.get("records", []))
+
+        # Pagination handling
+        next_records_url = data.get("nextRecordsUrl")
+
+        if next_records_url:
+            next_url = f"{instance_url}{next_records_url}"
+        else:
+            next_url = None
+
+    return records
+
+# -----------------------------
+# Step 4: Execute SOQL Query
+# -----------------------------
+
+query = """
+SELECT Id, Name, LastModifiedDate
+FROM Account
+"""
+
+records = fetch_salesforce_records(
+    soql_query=query,
     headers=headers,
-    params={
-        "q": "SELECT Id, Name FROM Account"
-    }
+    instance_url=instance_url
 )
 
-# Salesforce — paginated API call with retry
-import requests, time
+print(f"Total records fetched: {len(records)}")
 
-def fetch_salesforce_records(endpoint, headers, max_retries=3):
-    records, next_url = [], endpoint
-    while next_url:
-        for attempt in range(max_retries):
-            resp = requests.get(next_url, headers=headers)
-            if resp.status_code == 429:
-                time.sleep(2 ** attempt)
-                continue
-            resp.raise_for_status()
-            break
-        data     = resp.json()
-        records += data["records"]
-        next_url = data.get("nextRecordsUrl")
-    return records
 ```
 
 **One-Liner:** *"Salesforce + Smartsheet = OAuth2 auth, paginated fetch, exponential retry, schema-resilient write to Iceberg."*
