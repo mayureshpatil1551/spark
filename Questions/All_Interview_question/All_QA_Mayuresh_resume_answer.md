@@ -1808,6 +1808,31 @@ df_incremental = spark.read.jdbc(
 > *Third, **schema drift**. Salesforce objects occasionally had new fields added. I handled this with `mergeSchema=true` when writing to Iceberg so new fields are captured without pipeline failure."*
 
 ```python
+response = requests.post(
+    auth_url,
+    data={
+        "grant_type": "password",
+        "client_id": client_id,
+        "client_secret": client_secret,
+        "username": username,
+        "password": password
+    }
+)
+
+access_token = response.json()["access_token"]
+
+headers = {
+    "Authorization": f"Bearer {access_token}"
+}
+
+response = requests.get(
+    f"{base_url}/services/data/v58.0/query",
+    headers=headers,
+    params={
+        "q": "SELECT Id, Name FROM Account"
+    }
+)
+
 # Salesforce — paginated API call with retry
 import requests, time
 
