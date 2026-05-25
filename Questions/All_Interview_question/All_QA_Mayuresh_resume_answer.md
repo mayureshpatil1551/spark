@@ -1790,6 +1790,287 @@ df_incremental = spark.read.jdbc(
 
 ---
 
+# 🎯 Interview Scripts — P3 to P9 (Ingestion Patterns)
+> **Short · Speakable · Exact Words · Mayuresh Patil**
+
+---
+
+## P3. ⭐ How did you integrate with Salesforce and Smartsheet APIs?
+
+**Speak This:**
+
+> *"I used the Salesforce REST API and Smartsheet SDK in Python. For Salesforce, I authenticated using OAuth2 client credentials and queried objects using SOQL. For Smartsheet, I used their official Python SDK with an API token stored in Azure Key Vault.*
+>
+> *The main challenges were — first, **pagination**. Both APIs return data in pages of 200–500 records. I built a loop that fetches pages until no next-page token is returned.*
+>
+> *Second, **rate limiting**. Salesforce throttles heavy API consumers. I added exponential backoff retry logic — if I get a 429, wait 2 seconds, retry, double wait on next failure.*
+>
+> *Third, **schema drift**. Salesforce objects occasionally had new fields added. I handled this with `mergeSchema=true` when writing to Iceberg so new fields are captured without pipeline failure."*
+
+```python
+# Salesforce — paginated API call with retry
+import requests, time
+
+def fetch_salesforce_records(endpoint, headers, max_retries=3):
+    records, next_url = [], endpoint
+    while next_url:
+        for attempt in range(max_retries):
+            resp = requests.get(next_url, headers=headers)
+            if resp.status_code == 429:
+                time.sleep(2 ** attempt)
+                continue
+            resp.raise_for_status()
+            break
+        data     = resp.json()
+        records += data["records"]
+        next_url = data.get("nextRecordsUrl")
+    return records
+```
+
+**One-Liner:** *"Salesforce + Smartsheet = OAuth2 auth, paginated fetch, exponential retry, schema-resilient write to Iceberg."*
+
+**Mistake to Avoid:** Don't hardcode API tokens. Always pull from Key Vault at runtime.
+
+---
+
+## P4. What is idempotency in pipelines?
+
+**Speak This:**
+
+> *"Idempotency means — run the pipeline once or ten times, you always get the same result. No duplicates, no data loss.*
+>
+> *I ensure idempotency in three ways.*
+>
+> *First, I use **MERGE INTO** instead of INSERT. If a record already exists, MERGE updates it. If not, it inserts. Running it twice is safe — second run is a no-op for unchanged records.*
+>
+> *Second, for partition writes, I use **replaceWhere** — overwrite only the specific date partition being reprocessed, not the entire table.*
+>
+> *Third, I store a **watermark** in an audit table. If the pipeline re-runs, it picks up the same watermark and fetches the same records — then MERGE handles the rest safely.*
+>
+> *In AbbVie, ADF automatically retries failed pipelines. Without idempotency, every retry would duplicate data."*
+
+```python
+# MERGE = idempotent upsert
+delta_table.alias("t").merge(
+    df_source.alias("s"),
+    "t.record_id = s.record_id"
+).whenMatchedUpdateAll() \
+ .whenNotMatchedInsertAll() \
+ .execute()
+
+# replaceWhere = overwrite only one partition
+df.write.format("delta") \
+    .option("replaceWhere", "load_date = '2024-01-15'") \
+    .mode("overwrite").save(path)
+```
+
+**One-Liner:** *"Idempotency = MERGE not INSERT — the pipeline can crash and restart safely without corrupting data."*
+
+**Mistake to Avoid:** Don't assume `mode("overwrite")` is idempotent. It replaces everything — if the source data changed between runs, you get different results.
+
+---
+
+## P5. ⭐ How did you achieve 99.9% data uptime for 10M+ daily records?
+
+**Speak This:**
+
+> *"99.9% uptime means less than 9 hours of downtime per year. I achieved this through four practices.*
+>
+> *First, **idempotent pipelines** — every run uses MERGE so retries are safe. ADF auto-retries failed jobs up to 3 times.*
+>
+> *Second, **audit logging with Modak Nabu** — after every run, I write rows_read, rows_written, status, and timestamp to an audit table. If something goes wrong, I can pinpoint exactly which run and which records were affected.*
+>
+> *Third, **error handling and quarantine** — bad records don't fail the pipeline. They go to a quarantine table with the failure reason. The good records continue processing.*
+>
+> *Fourth, **event-based triggers** — instead of fixed-time schedules, I use ADLS event triggers for file-based sources. Pipeline fires only when the file actually arrives — no wasted runs on missing files.*
+>
+> *Together these meant: failures are caught fast, retries are safe, and bad data never blocks good data."*
+
+**One-Liner:** *"99.9% uptime = idempotent pipelines + audit logging + quarantine pattern + event-based triggers."*
+
+**Mistake to Avoid:** Don't rely on schedule triggers for file-based sources. If the file is late, the pipeline runs on nothing. Use event-based triggers instead.
+
+---
+
+## P6. ⭐ How would you design a pipeline for exactly-once semantics?
+
+**Speak This:**
+
+> *"Exactly-once means every record is processed and written exactly one time — not zero times, not twice.*
+>
+> *For **batch pipelines**, I achieve this with two things: a persistent watermark so we fetch the same records on retry, and MERGE INTO the target so duplicate records are deduplicated at write time. Even if the pipeline runs twice for the same window, the result is identical.*
+>
+> *For **streaming pipelines** like Kafka to Delta, exactly-once needs three things together: first, Kafka consumer offsets committed only after successful write. Second, a checkpoint location on S3 so Spark knows the last processed offset. Third, MERGE in `foreachBatch` so re-processed batches don't create duplicates.*"
+
+```python
+# Streaming exactly-once — Kafka → Delta
+def upsert_batch(batch_df, batch_id):
+    DeltaTable.forPath(spark, target_path).alias("t") \
+        .merge(batch_df.alias("s"), "t.id = s.id") \
+        .whenMatchedUpdateAll() \
+        .whenNotMatchedInsertAll() \
+        .execute()
+
+df_stream.writeStream \
+    .foreachBatch(upsert_batch) \
+    .option("checkpointLocation", "s3://checkpoints/stream/") \
+    .trigger(processingTime="60 seconds") \
+    .start()
+```
+
+> *"Checkpoint tracks offsets — if the job crashes, it restarts from the last committed offset. MERGE handles any re-processed records safely. That's exactly-once end to end."*
+
+**One-Liner:** *"Exactly-once = watermark + MERGE for batch; checkpoint + MERGE in foreachBatch for streaming."*
+
+**Mistake to Avoid:** Checkpoint alone doesn't give exactly-once if you use `mode("append")`. You need MERGE to handle duplicates from replayed batches.
+
+---
+
+## P7. ⭐ 20TB live dataset migration — zero downtime strategy
+
+**Speak This:**
+
+> *"Zero downtime on a 20TB migration means you can never just switch off the old system and switch on the new one. You need a phased approach.*
+>
+> *I followed four phases.*
+>
+> ***Phase 1 — Mirror.** Run the new Iceberg pipeline in parallel with the legacy system for 2 weeks. Both receive writes. Old system stays live.*
+>
+> ***Phase 2 — Validate.** Compare row counts, checksums, and sample records between legacy and Iceberg at every layer — Raw, Trusted, Curated. Automate these reconciliation checks.*
+>
+> ***Phase 3 — Cutover.** Once validation passes, redirect downstream consumers to Iceberg one table at a time — not all at once. Monitor each cutover for 24–48 hours.*
+>
+> ***Phase 4 — Decommission.** Keep the legacy system running for 30 days as a fallback. Then retire it.*
+>
+> *The biggest technical challenge was partition design. We initially partitioned by patient_id — 10 million tiny S3 directories, metadata listing took longer than actual processing. Fixed by switching to year(event_date) partitioning with Z-ordering on patient_id within partitions."*
+
+**One-Liner:** *"20TB zero-downtime = mirror in parallel, validate with reconciliation, cutover table by table, decommission after 30-day fallback."*
+
+**Mistake to Avoid:** Never migrate all tables in one cutover weekend. If something breaks, rollback of 20TB is catastrophic. Always migrate table by table with validation between each.
+
+---
+
+## P8. Source file arrives with unexpected extra or missing columns
+
+**Speak This:**
+
+> *"This happens regularly in production — it's called schema drift.*
+>
+> *For **extra columns** (source added new fields): I use `mergeSchema=true` when writing to Delta or Iceberg. New columns are automatically added to the table schema. I also send an alert so the team knows a new field arrived.*
+>
+> *For **missing columns** (source removed a field): The write will have nulls for that column in the target. I detect this by comparing expected vs actual columns before writing:*"
+
+```python
+expected = {"patient_id", "name", "dob", "facility_id", "updated_at"}
+actual   = set(df.columns)
+
+extra_cols   = actual - expected
+missing_cols = expected - actual
+
+if missing_cols:
+    log_alert(f"Missing columns: {missing_cols} — filling with NULL")
+    for col in missing_cols:
+        df = df.withColumn(col, F.lit(None))
+
+if extra_cols:
+    log_alert(f"New columns detected: {extra_cols}")
+
+# Write with mergeSchema — handles both cases
+df.write.format("delta") \
+    .option("mergeSchema", "true") \
+    .mode("append").save(target_path)
+```
+
+> *"Raw Bronze layer saves the original file as-is — so even if my transformation mishandled a column, I can always reprocess from raw."*
+
+**One-Liner:** *"Extra columns → mergeSchema=true + alert. Missing columns → fill with NULL + alert. Bronze raw layer = safety net for both."*
+
+**Mistake to Avoid:** Don't fail the entire pipeline on schema drift. Log and alert, then handle gracefully — dropping a pipeline for a new column is not acceptable in production.
+
+---
+
+## P9. 📌 Metadata-driven ingestion framework — 500+ tables
+
+**Speak This:**
+
+> *"A metadata-driven framework means — instead of writing one PySpark script per table, you write one generic engine and drive it with configuration.*
+>
+> *We had 500+ Oracle tables to ingest into Iceberg. Writing 500 scripts is unmaintainable — any change to logging or DQ logic means updating 500 files.*
+>
+> *I built a framework where a YAML config defines each table's rules. One Python class handles all tables.*"
+
+```yaml
+# pipeline_config.yaml
+tables:
+  - name: PATIENT_RECORDS
+    source: oracle
+    primary_key: patient_id
+    load_type: incremental
+    watermark_col: updated_at
+    partition_col: record_date
+    target: iceberg.bronze.patient_records
+
+  - name: FACILITY_MASTER
+    source: oracle
+    primary_key: facility_id
+    load_type: full
+    partition_col: load_date
+    target: iceberg.bronze.facility_master
+```
+
+```python
+# One generic engine drives all 500 tables
+class IngestionEngine:
+    def run(self, table_config):
+        # 1. Read source based on config
+        df = self.read_source(table_config)
+
+        # 2. Apply DQ checks
+        df_clean, df_bad = self.apply_dq(df, table_config["primary_key"])
+
+        # 3. Write bad records to quarantine
+        self.write_quarantine(df_bad, table_config["name"])
+
+        # 4. MERGE clean records to Iceberg
+        self.merge_to_iceberg(df_clean, table_config)
+
+        # 5. Log audit record
+        self.log_audit(table_config["name"], df_clean.count())
+
+# Run all tables from config
+config = yaml.load(open("pipeline_config.yaml"))
+engine = IngestionEngine(spark)
+
+for table in config["tables"]:
+    engine.run(table)
+```
+
+> *"To add a new table, I add one YAML block — no code change needed. To fix a DQ bug, I fix it in one place — it applies to all 500 tables instantly. This is how we processed 10M+ records daily without a 500-file maintenance nightmare."*
+
+**One-Liner:** *"Metadata-driven = one engine + config file — adding a new table is one YAML block, not a new script."*
+
+**Mistake to Avoid:** Don't hardcode any table-specific logic inside the engine class. The moment you add a special `if table_name == 'X'` block, you've broken the pattern. All table-specific rules belong in the config.
+
+---
+
+## 📋 Quick Speak Reference
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│  P3  Salesforce/Smartsheet  → OAuth2 + pagination + retry + merge  │
+│  P4  Idempotency            → MERGE not INSERT + watermark          │
+│  P5  99.9% uptime           → idempotent + audit + quarantine       │
+│  P6  Exactly-once           → checkpoint + MERGE in foreachBatch    │
+│  P7  20TB migration         → mirror → validate → cutover → retire  │
+│  P8  Schema drift           → mergeSchema + alert + Bronze fallback │
+│  P9  Metadata framework     → YAML config + one generic engine      │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+---
+*Ingestion Patterns P3–P9 | Mayuresh Patil | May 2026*
+
+
 ### P4. Idempotency in pipelines
 
 **One-liner:** An idempotent pipeline produces the same result whether run once or multiple times — safe to re-run after failures.
