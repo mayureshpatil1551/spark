@@ -2634,32 +2634,35 @@ Track full history — close old rows, insert new rows
 
 ```python
 
-# H3 — MERGE INTO Delta table (upsert)
+# H4 — SCD Type 2 using Delta MERGE
 from delta.tables import DeltaTable
+from pyspark.sql.functions import current_timestamp, lit
 
-# Load target Delta table
-target = DeltaTable.forPath(spark, "s3://bucket/delta/customers")
+target = DeltaTable.forPath(spark, "s3://bucket/delta/dim_customer")
 
-# Source: new/updated records from upstream
-source_df = spark.read.parquet("s3://bucket/staging/customers_update")
+# Source has new/changed records
+source_df = spark.read.parquet("s3://bucket/staging/customers")
 
-# MERGE: match on customer_id
+# Step 1 — close existing active rows that changed
 target.alias("tgt").merge(
     source_df.alias("src"),
-    "tgt.customer_id = src.customer_id AND tgt.study_id = src.study_id"
-).whenMatchedUpdate(
-    set={
-        "name": col("src.name"),
-        "revenue": col("src.revenue"),
-        "updated_at": col("src.updated_at")
-    }
-).whenMatchedDelete(
-    condition=col("src.is_deleted") == True   # delete if flagged in source
-).whenNotMatchedInsertAll() \
- .execute()
+    "tgt.customer_id = src.customer_id AND tgt.is_current = true"
+    " AND tgt.email != src.email"   # only if something changed
+) \
+.whenMatchedUpdate(set={
+    "is_current":  "false",
+    "end_date":    "current_timestamp()"
+}) \
+.execute()
 
-# Optional: also handle deletes
-# .whenMatchedDelete()  <-- add a "is_deleted" flag in source
+# Step 2 — insert new version of changed rows + brand new rows
+new_rows = source_df.withColumn("is_current", lit(True)) \
+                    .withColumn("start_date", current_timestamp()) \
+                    .withColumn("end_date", lit(None).cast("timestamp"))
+
+new_rows.write.format("delta") \
+        .mode("append") \
+        .save("s3://bucket/delta/dim_customer")
 
 ```
 
