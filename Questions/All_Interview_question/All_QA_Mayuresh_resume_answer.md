@@ -2510,6 +2510,40 @@ for table in config['tables']:
 │ Kafka        │ "Distributed log — offset model enables exactly-once"          │
 └──────────────────────────────────────────────────────────────────────────────┘
 ```
+---
+Read nested JSON from S3 & flatten it
+Use struct field access + explode() for arrays
+
+```python
+# H1 — Read nested JSON from S3 and flatten it
+from pyspark.sql import SparkSession
+from pyspark.sql.functions import col, explode
+
+spark = SparkSession.builder.appName("FlattenJSON").getOrCreate()
+
+# Read raw JSON from S3
+df = spark.read.option("multiLine", "true") \
+              .json("s3://bucket/path/data.json")
+
+# Access nested struct fields with dot notation
+df_flat = df.select(
+    col("id"),
+    col("name"),
+    col("address.city").alias("city"),
+    col("address.zip").alias("zip"),
+    explode(col("orders")).alias("order")   # explode array column
+)
+
+# Now flatten the exploded struct
+df_final = df_flat.select(
+    col("id"), col("name"), col("city"), col("zip"),
+    col("order.order_id").alias("order_id"),
+    col("order.amount").alias("amount")
+)
+
+df_final.show(5, truncate=False)
+
+```
 
 ---
 
