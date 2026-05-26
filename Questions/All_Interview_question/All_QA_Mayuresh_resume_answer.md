@@ -2522,8 +2522,13 @@ from pyspark.sql.functions import col, explode
 spark = SparkSession.builder.appName("FlattenJSON").getOrCreate()
 
 # Read raw JSON from S3
+# PERMISSIVE - tries to parse, puts bad records in _corrupt_record
+# DROPMALFORMED - drop bad records | FAILFAST -throws an error on malformed records.
 df = spark.read.option("multiLine", "true") \
-              .json("s3://bucket/path/data.json")
+               .option("mode", "PERMISSIVE") \  
+               .option("allowSingleQuotes", "true") \
+               .option("dateFormat", "yyyy-MM-dd") \
+               .json("s3://bucket/path/data.json")
 
 # Access nested struct fields with dot notation
 df_flat = df.select(
