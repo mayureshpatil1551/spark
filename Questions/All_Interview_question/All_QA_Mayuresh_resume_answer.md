@@ -2552,5 +2552,430 @@ df_final.show(5, truncate=False)
 
 ---
 
+
+---
+Read CSV from S3 with explicit schema (no inferSchema in production)
+Never use inferSchema=True in production — it causes full file scan
+
+```python
+
+# H2 — Read CSV with explicit schema (production-safe)
+from pyspark.sql.types import StructType, StructField, StringType, IntegerType, DateType, DoubleType
+
+# Define schema explicitly — avoids full scan + type guessing
+schema = StructType([
+    StructField("customer_id",  StringType(),  nullable=False),
+    StructField("name",          StringType(),  nullable=True),
+    StructField("age",           IntegerType(), nullable=True),
+    StructField("signup_date",   DateType(),    nullable=True),
+    StructField("revenue",       DoubleType(),  nullable=True)
+])
+
+df = spark.read \
+    .option("header", "true") \
+    .option("dateFormat", "yyyy-MM-dd") \
+    .option("mode", "PERMISSIVE")  \  # or FAILFAST / DROPMALFORMED
+    .option("quote", "\") \ # "A,B" --> A,B
+    .option("escape", "\") \
+    .option("encoding", "UTF-8") # Handle special charator
+    .option("multiline", "true")
+    .schema(schema) \
+    .csv("s3://bucket/path/customers.csv")
+
+df.write.format("csv") \
+    .option("header","true") \
+    .mode("overwrite") \
+    .save("s3://bucket/path/")
+
+```
+
+---
+
+---
+MERGE INTO Delta/Iceberg — upsert pattern
+Insert new rows, update existing rows based on a key
+
+```python
+
+# H3 — MERGE INTO Delta table (upsert)
+from delta.tables import DeltaTable
+
+# Load target Delta table
+target = DeltaTable.forPath(spark, "s3://bucket/delta/customers")
+
+# Source: new/updated records from upstream
+source_df = spark.read.parquet("s3://bucket/staging/customers_update")
+
+# MERGE: match on customer_id
+target.alias("tgt").merge(
+    source_df.alias("src"),
+    "tgt.customer_id = src.customer_id AND tgt.study_id = src.study_id"
+).whenMatchedUpdate(
+    set={
+        "name": col("src.name"),
+        "revenue": col("src.revenue"),
+        "updated_at": col("src.updated_at")
+    }
+).whenMatchedDelete(
+    condition=col("src.is_deleted") == True   # delete if flagged in source
+).whenNotMatchedInsertAll() \
+ .execute()
+
+# Optional: also handle deletes
+# .whenMatchedDelete()  <-- add a "is_deleted" flag in source
+
+```
+
+---
+
+---
+⭐ Implement SCD Type 2 using Delta MERGE + window functions
+Track full history — close old rows, insert new rows
+
+```python
+
+# H3 — MERGE INTO Delta table (upsert)
+from delta.tables import DeltaTable
+
+# Load target Delta table
+target = DeltaTable.forPath(spark, "s3://bucket/delta/customers")
+
+# Source: new/updated records from upstream
+source_df = spark.read.parquet("s3://bucket/staging/customers_update")
+
+# MERGE: match on customer_id
+target.alias("tgt").merge(
+    source_df.alias("src"),
+    "tgt.customer_id = src.customer_id AND tgt.study_id = src.study_id"
+).whenMatchedUpdate(
+    set={
+        "name": col("src.name"),
+        "revenue": col("src.revenue"),
+        "updated_at": col("src.updated_at")
+    }
+).whenMatchedDelete(
+    condition=col("src.is_deleted") == True   # delete if flagged in source
+).whenNotMatchedInsertAll() \
+ .execute()
+
+# Optional: also handle deletes
+# .whenMatchedDelete()  <-- add a "is_deleted" flag in source
+
+```
+
+---
+
+---
+⭐ PySpark JDBC read from Oracle with parallel partitions
+Use partitionColumn + numPartitions to parallelize reads
+
+```python
+
+# H5 — JDBC Oracle read with parallel partitions
+
+jdbc_url = "jdbc:oracle:thin:@//oracle-host:1521/ORCLDB"
+
+df = spark.read.format("jdbc") \
+    .option("url",             jdbc_url) \
+    .option("dbtable",        "SCHEMA.PATIENT_DATA") \
+    .option("user",           "db_user") \
+    .option("password",       "db_pass") \
+    .option("driver",         "oracle.jdbc.driver.OracleDriver") \
+    # Parallel partition options below
+    .option("partitionColumn", "patient_id")  # numeric col to split on
+    .option("lowerBound",      "1") \
+    .option("upperBound",      "10000000") \
+    .option("numPartitions",   "20") \     # 20 parallel DB connections
+    .option("fetchsize",       "10000") \  # rows per fetch batch
+    .load()
+
+df.write.format("jdbc") \
+    .option("url",             jdbc_url) \
+    .option("user",           "db_user") \
+    .option("password",       "db_pass") \
+    .option("dbtable", "schema.outputtable") \
+    .save()
+
+```
+
+**Why parallel?** Without partitionColumn, Spark opens ONE connection and pulls everything sequentially — very slow. With numPartitions=20, Spark opens 20 connections in parallel, each reading a chunk of patient_id range. fetchsize controls how many rows per network round trip.
+
+---
+
+---
+⭐ Find new, updated and deleted records between source and target
+Classic CDC pattern using join + condition logic
+
+```python
+
+# H6 — Detect new / updated / deleted records
+from pyspark.sql.functions import col
+
+source = spark.read.parquet("s3://bucket/source/customers")
+target = spark.read.parquet("s3://bucket/target/customers")
+
+# NEW — in source but not in target
+new_records = source.join(target, on="customer_id", how="left_anti")
+
+# UPDATED — in both, but a column value changed
+updated_records = source.alias("src").join(
+    target.alias("tgt"),
+    on="customer_id",
+    how="inner"
+).filter(
+    col("src.email") != col("tgt.email")
+    | (col("src.revenue") != col("tgt.revenue"))
+).select("src.*")
+
+# DELETED — in target but not in source
+deleted_records = target.join(source, on="customer_id", how="left_anti")
+
+# Print counts for validation
+print(f"New: {new_records.count()}")
+print(f"Updated: {updated_records.count()}")
+print(f"Deleted: {deleted_records.count()}")
+
+```
+
+**💡 left_anti join** is the cleanest way to find records in one dataset that don't exist in another — no NULL checks needed. For updates, use hash comparison (md5 of all columns) instead of checking each column individually when there are many columns.
+
+---
+
+---
+⭐ Two-phase salted aggregation for skewed groupBy
+Prevent data skew by adding a salt key before aggregating
+
+```python
+
+# H7 — Salted aggregation to handle skewed groupBy
+from pyspark.sql.functions import col, floor, rand, sum as _sum
+
+SALT_BUCKETS = 10
+
+# Step 1 — Add salt key to distribute skewed keys across buckets
+df_salted = df.withColumn(
+    "salt", (rand() * SALT_BUCKETS).cast("int")
+).withColumn(
+    "salted_key", col("region").cast("string") + lit("_") + col("salt").cast("string")
+)
+
+# Step 2 — First aggregation: on salted key (distributed)
+df_partial = df_salted.groupBy("salted_key", "region") \
+                      .agg(_sum("revenue").alias("partial_sum"))
+
+# Step 3 — Second aggregation: on original key (small, no skew)
+df_final = df_partial.groupBy("region") \
+                     .agg(_sum("partial_sum").alias("total_revenue"))
+
+df_final.show()
+
+```
+
+**💡 When to use salting?** When one groupBy key has millions of rows (e.g. region='US'), one executor gets overloaded. Salting splits that key into 10 sub-keys, spreads load, then combines. Two-phase = pre-aggregate with salt, then final aggregate without salt.
+
+---
+
+---
+⭐ Comprehensive Data Quality check function
+Null, duplicate, range, and referential integrity checks
+
+```python
+
+# H8 — Reusable Data Quality check function
+from pyspark.sql.functions import col, count, countDistinct, when, isnull
+
+def run_dq_checks(df, table_name: str, pk_col: str, ref_df=None, ref_col=None):
+    results = []
+
+    # 1. NULL checks on all columns
+    for c in df.columns:
+        null_count = df.filter(col(c).isNull()).count()
+        results.append({"check": f"null_{c}", "passed": null_count == 0, "count": null_count})
+
+    # 2. Duplicate check on primary key
+    total     = df.count()
+    distinct  = df.select(pk_col).distinct().count()
+    dup_count = total - distinct
+    results.append({"check": f"duplicate_{pk_col}", "passed": dup_count == 0, "count": dup_count})
+
+    # 3. Range check — revenue must be > 0
+    if "revenue" in df.columns:
+        bad_range = df.filter(col("revenue") < 0).count()
+        results.append({"check": "range_revenue_positive", "passed": bad_range == 0, "count": bad_range})
+
+    # 4. Referential integrity — FK must exist in reference table
+    if ref_df is not None:
+        orphans = df.join(ref_df, on=ref_col, how="left_anti").count()
+        results.append({"check": f"ref_integrity_{ref_col}", "passed": orphans == 0, "count": orphans})
+
+    # Print results
+    for r in results:
+        status = "✅ PASS" if r["passed"] else "❌ FAIL"
+        print(f"{status} | {table_name} | {r['check']} | count={r['count']}")
+
+    return results
+
+```
+
+**💡 Interview tip:** DQ has 4 pillars — Completeness (nulls), Uniqueness (duplicates), Validity (range/format), Referential integrity (FK). Always make DQ a reusable function, not inline checks. Return results so you can log them to a monitoring table.
+
+---
+
+---
+⭐ Full Medallion Architecture: Bronze → Silver → Gold with DQ gates
+End-to-end pipeline with quality checkpoints at each layer
+
+```python
+
+# H10 — Bronze → Silver → Gold Medallion Pipeline
+from pyspark.sql.functions import col, current_timestamp, lit, md5, concat_ws
+
+BRONZE_PATH = "s3://bucket/bronze/patients"
+SILVER_PATH = "s3://bucket/silver/patients"
+GOLD_PATH   = "s3://bucket/gold/patient_summary"
+
+# ── BRONZE: Raw ingestion — no transformation, just load + metadata
+def ingest_bronze(source_path):
+    df = spark.read.option("header", "true").csv(source_path)
+    df = df.withColumn("ingested_at", current_timestamp()) \
+           .withColumn("source_file",  lit(source_path))
+    df.write.format("delta").mode("append").save(BRONZE_PATH)
+    print(f"Bronze: {df.count()} rows loaded")
+
+# ── DQ Gate — fail if too many nulls
+def dq_gate(df, col_name, threshold=0.05):
+    null_pct = df.filter(col(col_name).isNull()).count() / df.count()
+    if null_pct > threshold:
+        raise ValueError(f"DQ FAIL: {col_name} null% {null_pct:.2%} > threshold {threshold:.2%}")
+    print(f"DQ PASS: {col_name} null% = {null_pct:.2%}")
+
+# ── SILVER: Clean, deduplicate, standardize
+def transform_silver():
+    df = spark.read.format("delta").load(BRONZE_PATH)
+    dq_gate(df, "patient_id")                     # Gate 1: no nulls on PK
+
+    df_clean = df.dropDuplicates(["patient_id"]) \
+                 .filter(col("patient_id").isNotNull()) \
+                 .withColumn("dob", col("dob").cast("date")) \
+                 .withColumn("gender", col("gender").upper())
+
+    dq_gate(df_clean, "dob")                       # Gate 2: check after clean
+    df_clean.write.format("delta").mode("overwrite").save(SILVER_PATH)
+    print(f"Silver: {df_clean.count()} rows written")
+
+# ── GOLD: Aggregate for business consumption
+def build_gold():
+    df = spark.read.format("delta").load(SILVER_PATH)
+    df_gold = df.groupBy("region", "gender") \
+                .agg(count("patient_id").alias("patient_count"),
+                     avg("age").alias("avg_age"))
+    df_gold.write.format("delta").mode("overwrite").save(GOLD_PATH)
+
+# ── Run the full pipeline
+ingest_bronze("s3://bucket/raw/patients_20240601.csv")
+transform_silver()
+build_gold()
+
+```
+
+💡 Key difference: Python UDF = row-by-row serialization (slow, ~10x overhead). Pandas UDF = Apache Arrow columnar batches (vectorized, near-native speed). Always prefer Pandas UDF. Only use Python UDF for very complex logic that can't be vectorized.
+---
+
+---
+⭐ Pandas UDF vs Python UDF — write both, explain performance
+Row-by-row vs vectorized — critical performance difference
+
+```python
+# H11 — Python UDF vs Pandas UDF (performance comparison)
+from pyspark.sql.functions import udf, pandas_udf
+from pyspark.sql.types import StringType, DoubleType
+import pandas as pd
+
+# ── OPTION 1: Regular Python UDF — row by row (slow)
+# Spark serializes EACH ROW to Python, processes, returns to JVM
+@udf(returnType=StringType())
+def clean_name_python_udf(name: str) -> str:
+    if name is None:
+        return None
+    return name.strip().title()
+
+# ── OPTION 2: Pandas UDF — vectorized (fast)
+# Spark sends a whole BATCH (Arrow column) at once to Python
+@pandas_udf(StringType())
+def clean_name_pandas_udf(names: pd.Series) -> pd.Series:
+    return names.str.strip().str.title().fillna("")
+
+# Usage — both called the same way
+df.withColumn("clean_name_slow", clean_name_python_udf(col("name"))).show()
+df.withColumn("clean_name_fast", clean_name_pandas_udf(col("name"))).show()
+
+# ── Pandas UDF for aggregation
+@pandas_udf(DoubleType())
+def mean_udf(v: pd.Series) -> float:
+    return v.mean()
+
+df.groupBy("region").agg(mean_udf(col("revenue"))).show()
+
+```
+
+💡 Key difference: Python UDF = row-by-row serialization (slow, ~10x overhead). Pandas UDF = Apache Arrow columnar batches (vectorized, near-native speed). Always prefer Pandas UDF. Only use Python UDF for very complex logic that can't be vectorized.
+---
+
+---
+⭐ Incremental load with watermark + MERGE into Iceberg
+Only process new records using last-loaded timestamp
+
+```python
+
+# H12 — Incremental load with watermark + MERGE into Iceberg
+from pyspark.sql.functions import col, max as _max, lit, current_timestamp
+
+ICEBERG_TABLE = "catalog.db.patients"
+WATERMARK_PATH = "s3://bucket/metadata/watermark.txt"
+
+# ── Step 1: Read last watermark
+def get_watermark() -> str:
+    try:
+        wm = spark.read.text(WATERMARK_PATH).collect()[0][0]
+        return wm
+    except:
+        return "1900-01-01 00:00:00"     # first run — load all
+
+# ── Step 2: Read only NEW rows from source since watermark
+last_wm = get_watermark()
+print(f"Loading records updated after: {last_wm}")
+
+source_df = spark.read.parquet("s3://bucket/source/patients") \
+    .filter(col("updated_at") > lit(last_wm))
+
+print(f"New/updated records: {source_df.count()}")
+
+# ── Step 3: MERGE into Iceberg
+source_df.createOrReplaceTempView("source_data")
+
+spark.sql(f"""
+    MERGE INTO {ICEBERG_TABLE} AS tgt
+    USING source_data AS src
+    ON tgt.patient_id = src.patient_id
+    WHEN MATCHED THEN
+        UPDATE SET tgt.name       = src.name,
+                   tgt.updated_at = src.updated_at
+    WHEN NOT MATCHED THEN
+        INSERT *
+""")
+
+# ── Step 4: Save new watermark (max updated_at from this batch)
+new_wm = source_df.agg(_max("updated_at")).collect()[0][0]
+spark.createDataFrame([[str(new_wm)]]).coalesce(1) \
+     .write.mode("overwrite").text(WATERMARK_PATH)
+print(f"Watermark updated to: {new_wm}")
+
+
+```
+
+**💡 Watermark pattern:** Store the max(updated_at) from the last successful run. Next run reads only records where updated_at > watermark. Then MERGE to upsert. Finally update the watermark. This is how real incremental pipelines work in production.
+
+---
+
 *Interview Answer Scripts | Mayuresh Patil | May 2026*
 *Part 2: Delta Lake · Architecture · Governance · Azure · SQL · Kafka · Project*
