@@ -8,9 +8,12 @@
 8. what is data skew? how to identify? how to resolve? Broadcast join, AQE, Salting (why & how)?
 9. Difference between desc_rank(), rank(), row_number()?
 10. SQL Scenarios in inner join, left join and right join?
-11. table a      table b
+11.
+    ```
+    table a      table b
       1            1
       2            1
       null         3
       4            null
+    ```
 output for inner, left, right join?
