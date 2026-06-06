@@ -88,20 +88,54 @@ Most APIs don't return all records in one response — they split data across pa
 Implementation:
 
 ```python
-page = 1
-all_pages = []
+import requests
 
-while True:
-    url = f"{base_url}?page={page}&per_page=50"
-    resp = requests.get(url, headers=headers)
-    data = resp.json()
-    records = data.get("data", {}).get("records", [])
-    
-    if not records:
-        break  # No more data
-    
-    all_pages.append(data)
-    page += 1
+# Salesforce credentials
+instance_url = "https://abc.my.salesforce.com"
+access_token = "your_access_token"
+
+headers = {
+    "Authorization": f"Bearer {access_token}",
+    "Content-Type": "application/json"
+}
+
+# SOQL Query
+soql_query = """
+SELECT Id, Name, Industry, LastModifiedDate
+FROM Account
+"""
+
+# Initial URL
+url = f"{instance_url}/services/data/v59.0/query"
+
+params = {
+    "q": soql_query
+}
+
+all_records = []
+
+# First API call
+response = requests.get(
+    url,
+    headers=headers,
+    params=params
+).json()
+
+all_records.extend(response["records"])
+
+# Pagination
+while "nextRecordsUrl" in response:
+
+    next_url = instance_url + response["nextRecordsUrl"]
+
+    response = requests.get(
+        next_url,
+        headers=headers
+    ).json()
+
+    all_records.extend(response["records"])
+
+print(f"Total Records Retrieved = {len(all_records)}")
 ```
 
 The exit condition was an empty `records` list, or an explicit `"No data found."` message in the pagination metadata — whichever came first.
