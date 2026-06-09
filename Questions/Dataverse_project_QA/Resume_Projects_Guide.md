@@ -404,3 +404,501 @@ df = spark.read.format("delta").load(silver_path) \
 ---
 
 *Last Updated: June 2026*
+
+
+Good question — your understanding is correct. ADF acts as the mover. But the incremental logic is different for Oracle vs CSV because **Oracle has timestamps on records**, CSV files don't. Let me break both down fully.
+
+---
+
+## Oracle → Bronze Delta (Incremental)
+
+**Core idea: Watermark-based. You track "how far you've read" using a timestamp stored in a control table.**
+
+### Full Flow:
+
+```
+Control Table (Azure SQL / Databricks)
+  └── entity_name | last_watermark
+      oracle_claims | 2024-01-14 23:59:59
+
+          ↓ Step 1: ADF Lookup reads watermark
+
+ADF Copy Activity
+  Source: Oracle
+    → SELECT * FROM claims WHERE updated_at > '2024-01-14 23:59:59'
+  Sink: ADLS Gen2 (Parquet files in Bronze path)
+
+          ↓ Step 2: ADF triggers Databricks notebook
+
+Databricks reads Parquet → appends to Bronze Delta table
+
+          ↓ Step 3: ADF updates watermark to current run time
+Control Table → last_watermark = 2024-01-15 23:59:59
+```
+
+### ADF Pipeline Structure:
+
+```
+Pipeline: oracle_incremental_to_bronze
+│
+├── 1. Lookup Activity
+│       Query: SELECT last_watermark FROM control_table
+│               WHERE entity_name = 'oracle_claims'
+│       → Output: last_watermark = "2024-01-14 23:59:59"
+│
+├── 2. Copy Activity
+│       Source: Oracle Linked Service
+│         Query: SELECT * FROM claims
+│                WHERE updated_at > '@{activity('Lookup').output.firstRow.last_watermark}'
+│       Sink: ADLS Gen2
+│         Path: bronze/oracle/claims/run_date=2024-01-15/
+│         Format: Parquet
+│
+├── 3. Databricks Notebook Activity
+│       Notebook: /bronze_load/oracle_claims
+│       Parameters: run_date = 2024-01-15
+│
+└── 4. Stored Procedure Activity (or Script Activity)
+        Updates control_table SET last_watermark = CURRENT_TIMESTAMP
+        WHERE entity_name = 'oracle_claims'
+```
+
+### Databricks Notebook (Bronze Write):
+
+```python
+# Parameters passed from ADF
+run_date = dbutils.widgets.get("run_date")
+
+# Read Parquet landed by ADF Copy Activity
+df = spark.read.format("parquet") \
+    .load(f"abfss://bronze@storage.dfs.core.windows.net/oracle/claims/run_date={run_date}/")
+
+# Add audit columns
+from pyspark.sql.functions import current_timestamp, lit
+df = df \
+    .withColumn("ingestion_timestamp", current_timestamp()) \
+    .withColumn("source_system", lit("oracle")) \
+    .withColumn("run_date", lit(run_date))
+
+# APPEND to Bronze Delta — never overwrite
+df.write.format("delta") \
+    .mode("append") \
+    .partitionBy("run_date") \
+    .save("abfss://bronze@storage.dfs.core.windows.net/delta/claims/")
+```
+
+### One important edge case — what if the pipeline fails mid-run?
+
+You do **NOT** update the watermark until the Databricks notebook succeeds. That's why the watermark update is the **last step** in the ADF pipeline. If step 3 (Databricks) fails, ADF pipeline fails, watermark stays at the old value, and next run re-fetches from the same point. No data loss.
+
+---
+
+## CSV → Bronze Delta (Incremental)
+
+**Core idea: File-based tracking. CSV records have no `updated_at` column, so you track by which files have already been processed.**
+
+You have **3 options** depending on how your source drops files:
+
+---
+
+### Option A — Archive Pattern (Most Common)
+
+Source drops CSVs into a landing folder. After processing, you move them to an archive folder. Next run only sees unprocessed files.
+
+```
+Landing:  bronze/csv/claims/landing/    ← new files arrive here
+Archive:  bronze/csv/claims/archive/    ← processed files moved here
+```
+
+```
+ADF Pipeline: csv_incremental_to_bronze
+│
+├── 1. Get Metadata Activity
+│       Dataset: ADLS Gen2 → landing folder
+│       Field list: childItems  ← lists all files in folder
+│
+├── 2. If Condition Activity
+│       Condition: @greater(length(activity('GetMeta').output.childItems), 0)
+│       → TRUE: files exist, proceed
+│       → FALSE: no files, skip pipeline
+│
+├── 3. ForEach Activity (loop through each file)
+│   │
+│   ├── 3a. Copy Activity
+│   │       Source: landing/filename.csv
+│   │       Sink: ADLS Gen2
+│   │         Path: bronze/csv/claims/run_date=2024-01-15/
+│   │         Format: Parquet
+│   │
+│   └── 3b. Delete Activity (or Copy + Delete)
+│           Moves file from landing/ to archive/2024-01-15/filename.csv
+│
+└── 4. Databricks Notebook Activity
+        Reads all Parquet from run_date=2024-01-15/ → appends to Delta
+```
+
+---
+
+### Option B — Date Partitioned Folder Pattern
+
+Source system drops files into date-named folders each day. ADF reads only today's folder.
+
+```
+Landing:
+  bronze/csv/claims/2024-01-13/file1.csv
+  bronze/csv/claims/2024-01-14/file1.csv
+  bronze/csv/claims/2024-01-15/file1.csv  ← today, process this
+```
+
+ADF Copy Activity source path becomes dynamic:
+```
+Path: bronze/csv/claims/@{formatDateTime(pipeline().TriggerTime, 'yyyy-MM-dd')}/
+```
+
+This is the simplest pattern. No archive needed. ADF always knows which folder is "today's."
+
+---
+
+### Option C — Control Table Pattern (Most Robust)
+
+You maintain a table tracking exactly which files have been processed.
+
+```
+file_tracking_table:
+  file_name          | processed | processed_at
+  claims_20240114.csv | TRUE      | 2024-01-14 06:00
+  claims_20240115.csv | FALSE     | NULL          ← pick this up
+```
+
+```
+ADF Pipeline:
+  1. Lookup → SELECT file_name FROM file_tracking WHERE processed = FALSE
+  2. ForEach → loop through unprocessed files
+       a. Copy Activity → land file into Bronze path
+       b. Databricks Notebook → load to Delta
+       c. Script Activity → UPDATE file_tracking SET processed = TRUE WHERE file_name = X
+```
+
+This gives you full audit history and handles reruns safely.
+
+---
+
+## Side-by-Side Comparison
+
+| | Oracle | CSV |
+|---|---|---|
+| How to detect new data | `updated_at > watermark` timestamp | New files in folder / unarchived |
+| State tracking | Control table (timestamp) | Archive folder / file tracking table |
+| Risk of reprocessing | Low (watermark prevents it) | Medium (archive pattern prevents it) |
+| ADF activity used | Copy Activity + Lookup + Stored Proc | Copy Activity + Get Metadata + ForEach |
+| Bronze write mode | APPEND | APPEND |
+
+---
+
+## Key Rule for Both
+
+**Bronze Delta is always APPEND-only.** You never MERGE or OVERWRITE in Bronze. Every incremental run adds new rows with the `run_date` partition. This gives you:
+
+- Full history of every load
+- Ability to reprocess from Bronze if Silver breaks
+- Audit trail for debugging
+
+The MERGE/upsert logic happens only at Silver layer — not here.
+
+---
+
+Want me to go deeper into Step 3 (Silver layer) next — specifically how the MERGE logic works for incremental records coming from Bronze?
+
+
+## Silver Layer — Full Deep Dive (Bronze → Silver)
+
+---
+
+## First, Understand What's in Bronze
+
+Before writing Silver logic, remember what Bronze contains:
+
+```
+Bronze Delta Table: claims
+  ┌─────────────┬────────────┬──────────┬──────────────────────┬────────────┐
+  │ claim_id    │ amount     │ status   │ ingestion_timestamp  │ run_date   │
+  ├─────────────┼────────────┼──────────┼──────────────────────┼────────────┤
+  │ C001        │ 5000       │ APPROVED │ 2024-01-14 06:00     │ 2024-01-14 │
+  │ C002        │ 3000       │ PENDING  │ 2024-01-14 06:00     │ 2024-01-14 │
+  │ C001        │ 5000       │ REJECTED │ 2024-01-15 06:00     │ 2024-01-15 │  ← same C001, status changed
+  │ C003        │ 7000       │ APPROVED │ 2024-01-15 06:00     │ 2024-01-15 │  ← new record
+  └─────────────┴────────────┴──────────┴──────────────────────┴────────────┘
+```
+
+C001 appears **twice** — Bronze keeps both versions (it's append-only). Silver needs to figure out: is C001 new or an update? And keep only the latest.
+
+---
+
+## Silver Layer — 4 Stage Pipeline
+
+```
+Bronze Delta
+    │
+    ▼
+Stage 1: Incremental Read (only new Bronze records since last Silver run)
+    │
+    ▼
+Stage 2: Data Quality & Cleansing
+    │
+    ▼
+Stage 3: Deduplication (handle duplicates within this batch)
+    │
+    ▼
+Stage 4: MERGE into Silver Delta (handle new vs existing records)
+```
+
+---
+
+## Stage 1 — Incremental Read from Bronze
+
+You don't read ALL of Bronze every run. That would be full scan on 16TB — very slow.
+
+**Two approaches:**
+
+### Approach A — Partition Filter (Simpler)
+
+```python
+# ADF passes run_date as parameter
+run_date = dbutils.widgets.get("run_date")  # "2024-01-15"
+
+df_bronze_incremental = spark.read.format("delta") \
+    .load("abfss://bronze@storage.dfs.core.windows.net/delta/claims/") \
+    .filter(col("run_date") == run_date)  # only today's partition
+
+print(f"Records fetched from Bronze: {df_bronze_incremental.count()}")
+```
+
+This works because Bronze is partitioned by `run_date`. Spark only reads that one partition folder — not the full table.
+
+---
+
+### Approach B — Delta Change Data Feed / CDF (More Advanced)
+
+Delta Lake has a built-in feature called **Change Data Feed** — tracks every INSERT/UPDATE/DELETE at the Delta level.
+
+```python
+# Enable CDF on Bronze table (one-time setup)
+spark.sql("""
+    ALTER TABLE delta.`abfss://bronze@storage.dfs.core.windows.net/delta/claims/`
+    SET TBLPROPERTIES (delta.enableChangeDataFeed = true)
+""")
+
+# Read only changes since last Silver run (using Delta version or timestamp)
+df_bronze_incremental = spark.read.format("delta") \
+    .option("readChangeFeed", "true") \
+    .option("startingTimestamp", last_silver_run_timestamp) \
+    .load("abfss://bronze@storage.dfs.core.windows.net/delta/claims/")
+```
+
+For your intermediate level, **Approach A (partition filter) is what you'd use and explain in an interview.** CDF is good to mention as an optimization.
+
+---
+
+## Stage 2 — Data Quality & Cleansing
+
+```python
+from pyspark.sql.functions import col, trim, upper, lower, to_date, regexp_replace, when
+
+df_cleaned = df_bronze_incremental \
+    # --- Null checks: drop records with null on critical columns ---
+    .filter(col("claim_id").isNotNull()) \
+    .filter(col("amount").isNotNull()) \
+
+    # --- String standardization ---
+    .withColumn("status", upper(trim(col("status")))) \       # "approved " → "APPROVED"
+    .withColumn("region", lower(trim(col("region")))) \       # " North " → "north"
+
+    # --- Type casting ---
+    .withColumn("amount", col("amount").cast("double")) \
+    .withColumn("claim_date", to_date(col("claim_date"), "yyyy-MM-dd")) \
+
+    # --- Remove special characters from string fields ---
+    .withColumn("claim_id", regexp_replace(col("claim_id"), "[^A-Za-z0-9]", "")) \
+
+    # --- Handle bad values ---
+    .withColumn("amount", when(col("amount") < 0, 0).otherwise(col("amount"))) \  # no negative amounts
+
+    # --- Add Silver audit column ---
+    .withColumn("silver_load_timestamp", current_timestamp())
+```
+
+**Add a data quality summary log (good practice to mention):**
+
+```python
+total_input = df_bronze_incremental.count()
+total_after_clean = df_cleaned.count()
+dropped = total_input - total_after_clean
+
+print(f"Input records    : {total_input}")
+print(f"After cleansing  : {total_after_clean}")
+print(f"Dropped (bad data): {dropped}")
+
+# Optionally write rejected records to a quarantine/bad-records Delta table
+df_rejected = df_bronze_incremental.filter(col("claim_id").isNull())
+df_rejected.write.format("delta").mode("append") \
+    .save("abfss://silver@storage.dfs.core.windows.net/delta/quarantine/claims/")
+```
+
+---
+
+## Stage 3 — Deduplication Within the Batch
+
+Before merging into Silver, your incoming batch itself may have duplicates — same `claim_id` appearing multiple times in today's Bronze load (e.g., source sent the record twice).
+
+You keep only the **latest version per primary key** within this batch:
+
+```python
+from pyspark.sql.window import Window
+from pyspark.sql.functions import row_number, desc
+
+# Define window: for each claim_id, rank by latest updated_at
+window_spec = Window \
+    .partitionBy("claim_id") \
+    .orderBy(desc("updated_at"))   # most recent record first
+
+df_deduped = df_cleaned \
+    .withColumn("rn", row_number().over(window_spec)) \
+    .filter(col("rn") == 1) \
+    .drop("rn")
+
+print(f"After dedup: {df_deduped.count()}")
+```
+
+**Why this matters:**
+
+```
+Incoming batch (before dedup):
+  C001 | 5000 | REJECTED | updated_at: 2024-01-15 06:00   ← keep this
+  C001 | 5000 | PENDING  | updated_at: 2024-01-15 05:00   ← drop this
+
+After dedup:
+  C001 | 5000 | REJECTED | updated_at: 2024-01-15 06:00   ← only this goes to MERGE
+```
+
+---
+
+## Stage 4 — MERGE into Silver Delta
+
+This is the most critical step. MERGE handles 3 scenarios:
+
+```
+Incoming record vs Silver table:
+  ├── Record EXISTS in Silver + data has CHANGED  → UPDATE
+  ├── Record EXISTS in Silver + data is SAME      → do nothing (optional)
+  └── Record does NOT exist in Silver             → INSERT
+```
+
+### Simple MERGE (SCD Type 1 — overwrite with latest):
+
+```python
+from delta.tables import DeltaTable
+
+silver_path = "abfss://silver@storage.dfs.core.windows.net/delta/claims/"
+
+if DeltaTable.isDeltaTable(spark, silver_path):
+    # Silver table exists — do MERGE
+    silver_table = DeltaTable.forPath(spark, silver_path)
+
+    silver_table.alias("target") \
+        .merge(
+            df_deduped.alias("source"),
+            "target.claim_id = source.claim_id"    # join condition (primary key)
+        ) \
+        .whenMatchedUpdateAll() \     # if claim_id exists → overwrite all columns
+        .whenNotMatchedInsertAll() \  # if new claim_id → insert full row
+        .execute()
+else:
+    # First run — Silver doesn't exist yet, just write
+    df_deduped.write.format("delta") \
+        .partitionBy("claim_date") \
+        .save(silver_path)
+```
+
+**What happens for C001 in our example:**
+
+```
+Silver before MERGE:
+  C001 | 5000 | APPROVED | 2024-01-14
+
+Incoming batch (from Bronze 2024-01-15):
+  C001 | 5000 | REJECTED | 2024-01-15   ← claim_id matches → UPDATE
+  C003 | 7000 | APPROVED | 2024-01-15   ← new claim_id   → INSERT
+
+Silver after MERGE:
+  C001 | 5000 | REJECTED | 2024-01-15   ← updated
+  C002 | 3000 | PENDING  | 2024-01-14   ← unchanged
+  C003 | 7000 | APPROVED | 2024-01-15   ← new record
+```
+
+---
+
+### Advanced MERGE — SCD Type 2 (Keep full history)
+
+SCD Type 2 means: don't overwrite the old record. **Close it** and **insert a new version.** Used when business needs full audit history of how a record changed over time.
+
+```python
+from pyspark.sql.functions import lit, current_date
+
+silver_table = DeltaTable.forPath(spark, silver_path)
+
+silver_table.alias("target") \
+    .merge(
+        df_deduped.alias("source"),
+        # Match on PK + currently active record only
+        "target.claim_id = source.claim_id AND target.is_current = true"
+    ) \
+    .whenMatchedUpdate(
+        # Only update if something actually changed (avoid unnecessary writes)
+        condition = "target.status != source.status OR target.amount != source.amount",
+        set = {
+            "is_current"  : lit(False),           # close the old record
+            "end_date"    : current_date(),        # set expiry date
+            "updated_at"  : current_timestamp()
+        }
+    ) \
+    .whenNotMatchedInsertAll() \   # insert new records as-is
+    .execute()
+
+# Now insert the NEW version of updated records as active rows
+df_new_versions = df_deduped.join(
+    spark.read.format("delta").load(silver_path).filter(col("is_current") == False),
+    on="claim_id", how="inner"
+).select(df_deduped["*"]) \
+ .withColumn("is_current", lit(True)) \
+ .withColumn("start_date", current_date()) \
+ .withColumn("end_date", lit(None).cast("date"))
+
+df_new_versions.write.format("delta").mode("append").save(silver_path)
+```
+
+**SCD Type 2 result for C001:**
+
+```
+Silver after SCD Type 2 MERGE:
+  C001 | APPROVED | is_current=FALSE | start=2024-01-14 | end=2024-01-15  ← closed
+  C001 | REJECTED | is_current=TRUE  | start=2024-01-15 | end=NULL        ← active
+  C002 | PENDING  | is_current=TRUE  | start=2024-01-14 | end=NULL        ← unchanged
+  C003 | APPROVED | is_current=TRUE  | start=2024-01-15 | end=NULL        ← new
+```
+
+---
+
+## What to Say in an Interview
+
+| Question | Answer |
+|---|---|
+| **SCD Type 1 vs Type 2 — when to use which?** | "Type 1 when you only need the latest state — e.g., a customer's current address. Type 2 when business needs history — e.g., how a claim's status changed over time for audit or compliance." |
+| **Why dedup before MERGE?** | "MERGE fails if the source has two rows with the same primary key matching the same target row — it throws an ambiguous match error in Delta. Dedup before MERGE prevents that." |
+| **Why not just overwrite Silver daily?** | "Full overwrite on 16TB every day is expensive and slow. MERGE touches only changed records. Also, overwrite breaks Delta's time travel — MERGE preserves version history." |
+| **What if a MERGE run fails halfway?** | "Delta Lake MERGE is atomic — either the full MERGE commits or nothing does. No partial state. Next run will re-read the same Bronze partition and retry cleanly." |
+
+---
+
+Ready to move to **Step 4 — Gold Layer**, or do you want to go sideways into something specific like the **quarantine/bad-records pattern** or **how to unit test Silver notebooks**?
+
+
