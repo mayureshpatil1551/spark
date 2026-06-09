@@ -901,4 +901,292 @@ Silver after SCD Type 2 MERGE:
 
 Ready to move to **Step 4 — Gold Layer**, or do you want to go sideways into something specific like the **quarantine/bad-records pattern** or **how to unit test Silver notebooks**?
 
+## Gold Layer — Full Deep Dive (Silver → Gold)
 
+---
+
+## First, Understand the Purpose of Gold
+
+Bronze = raw. Silver = clean. **Gold = business-ready.**
+
+Gold is what analysts, BI tools, and downstream systems actually consume. The key shift in Gold is you stop thinking like an engineer and start thinking like a **business user.**
+
+```
+Silver (row-level, normalized)          Gold (aggregated, use-case specific)
+────────────────────────────────        ──────────────────────────────────────
+C001 | APPROVED | 5000 | North          region | month   | total  | count
+C002 | PENDING  | 3000 | South    →     North  | Jan-24  | 12000  | 3
+C003 | APPROVED | 7000 | North          South  | Jan-24  | 3000   | 1
+C004 | APPROVED | 6000 | East           East   | Jan-24  | 6000   | 1
+```
+
+Silver has **one row per entity.** Gold has **one row per business question.**
+
+---
+
+## Gold Layer Design — Key Decision First
+
+Before writing any code, answer: **who is consuming this Gold table and what are they asking?**
+
+In eCDP (financial/clinical data), typical consumers and questions:
+
+```
+Consumer              Business Question
+──────────────────    ────────────────────────────────────────────────
+Finance Team          Total claim amount by region, month, status
+Compliance Team       Count of REJECTED claims per product per quarter
+Operations Team       Average processing time per claim category
+BI / Power BI         Daily revenue trend across all regions
+Downstream System     Export approved claims above $10,000
+```
+
+Each of these becomes a **separate Gold table** (or Gold view). Gold is not one giant table — it's multiple purpose-built tables.
+
+---
+
+## Gold Layer — 3 Types of Tables You Build
+
+---
+
+### Type 1 — Aggregated Summary Table (Most Common)
+
+Pre-computed metrics grouped by business dimensions.
+
+```python
+from pyspark.sql import SparkSession
+from pyspark.sql.functions import (
+    col, sum, count, avg, max, min,
+    round, month, year, date_format,
+    current_timestamp, lit
+)
+
+spark = SparkSession.builder.getOrCreate()
+
+# Read from Silver — only active/current records
+df_silver = spark.read.format("delta") \
+    .load("abfss://silver@storage.dfs.core.windows.net/delta/claims/") \
+    .filter(col("is_current") == True) \           # SCD Type 2 — only active records
+    .filter(col("status") == "APPROVED")            # business filter: only approved claims
+
+# Build Gold aggregation
+df_gold_summary = df_silver \
+    .withColumn("claim_month", date_format(col("claim_date"), "yyyy-MM")) \
+    .groupBy("region", "product_category", "claim_month") \
+    .agg(
+        sum("amount").alias("total_claim_amount"),
+        count("claim_id").alias("total_claims"),
+        avg("amount").alias("avg_claim_amount"),
+        max("amount").alias("max_claim_amount"),
+        min("amount").alias("min_claim_amount"),
+        round(sum("amount") / count("claim_id"), 2).alias("revenue_per_claim")
+    ) \
+    .withColumn("gold_load_timestamp", current_timestamp()) \
+    .withColumn("report_date", lit(run_date))
+
+# Write to Gold Delta
+gold_path = "abfss://gold@storage.dfs.core.windows.net/delta/claims_summary/"
+
+df_gold_summary.write.format("delta") \
+    .mode("overwrite") \
+    .option("replaceWhere", f"report_date = '{run_date}'") \
+    .partitionBy("claim_month") \
+    .save(gold_path)
+```
+
+**Why `replaceWhere` instead of full overwrite:**
+
+```python
+# BAD — overwrites ENTIRE Gold table every run (expensive, risky)
+.mode("overwrite")
+
+# GOOD — overwrites only today's partition (fast, safe)
+.option("replaceWhere", f"report_date = '{run_date}'")
+```
+
+This means historical Gold partitions (Jan, Feb, Mar) are untouched. Only today's data is refreshed.
+
+---
+
+### Type 2 — Flattened / Denormalized Table
+
+Silver is normalized (multiple tables joined via foreign keys). Gold denormalizes everything into one wide flat table — so BI tools don't need complex JOINs.
+
+```python
+# Read multiple Silver tables
+df_claims   = spark.read.format("delta").load(silver_path + "claims/").filter(col("is_current") == True)
+df_patients = spark.read.format("delta").load(silver_path + "patients/").filter(col("is_current") == True)
+df_products = spark.read.format("delta").load(silver_path + "products/").filter(col("is_current") == True)
+
+# Join into one wide flat table
+df_gold_flat = df_claims \
+    .join(df_patients, on="patient_id", how="left") \
+    .join(df_products, on="product_id", how="left") \
+    .select(
+        # Claim fields
+        df_claims["claim_id"],
+        df_claims["amount"],
+        df_claims["status"],
+        df_claims["claim_date"],
+        # Patient fields
+        df_patients["patient_name"],
+        df_patients["age_group"],
+        df_patients["region"],
+        # Product fields
+        df_products["product_name"],
+        df_products["product_category"],
+        df_products["therapeutic_area"]
+    ) \
+    .withColumn("gold_load_timestamp", current_timestamp())
+
+# Write to Gold
+df_gold_flat.write.format("delta") \
+    .mode("overwrite") \
+    .option("replaceWhere", f"claim_date = '{run_date}'") \
+    .partitionBy("claim_date") \
+    .save("abfss://gold@storage.dfs.core.windows.net/delta/claims_flat/")
+```
+
+**Use case:** Power BI report connects directly to `claims_flat` Gold table — no JOINs needed in the report. Everything is pre-joined.
+
+---
+
+### Type 3 — Filtered Export Table (Downstream System)
+
+Sometimes Gold is not for BI — it's for a downstream system that only needs a specific subset of data.
+
+```python
+# Only APPROVED claims above $10,000 from last 30 days → export to Oracle / CSV
+df_gold_export = df_silver \
+    .filter(col("status") == "APPROVED") \
+    .filter(col("amount") >= 10000) \
+    .filter(col("claim_date") >= date_sub(current_date(), 30)) \
+    .select("claim_id", "patient_id", "amount", "claim_date", "region") \
+    .withColumn("export_timestamp", current_timestamp())
+
+# Write to Gold Delta (as staging for export)
+df_gold_export.write.format("delta") \
+    .mode("overwrite") \
+    .save("abfss://gold@storage.dfs.core.windows.net/delta/claims_export/")
+
+# ADF then picks this up and copies to Oracle / CSV outbound
+```
+
+---
+
+## Gold Layer — Incremental vs Full Refresh
+
+Unlike Bronze (always append) and Silver (always MERGE), Gold has **both patterns** depending on the table type:
+
+```
+Gold Table Type          Load Strategy          Why
+──────────────────────   ───────────────────    ──────────────────────────────────────
+Aggregated Summary       Partition overwrite     Recalculate only today's partition
+Flattened / Denorm       Partition overwrite     Re-join only today's new Silver data  
+Rolling window metric    Full overwrite          "Last 30 days" always recalculates all
+Export / Outbound        Full overwrite          Always fresh snapshot for downstream
+```
+
+**Rolling window example:**
+
+```python
+# "Last 30 days active claims" — must always full overwrite
+# because yesterday's 30-day window is different from today's
+df_rolling = df_silver \
+    .filter(col("claim_date") >= date_sub(current_date(), 30)) \
+    .groupBy("region") \
+    .agg(sum("amount").alias("rolling_30d_revenue"))
+
+df_rolling.write.format("delta") \
+    .mode("overwrite") \
+    .option("overwriteSchema", "true") \
+    .save(gold_path + "rolling_30d_summary/")
+```
+
+---
+
+## Gold Layer — Delta Optimizations
+
+Gold tables are read **very frequently** by BI tools. You must optimize them aggressively.
+
+```python
+# Run after every Gold write
+
+# 1. OPTIMIZE — compact small files into large ones (better read performance)
+spark.sql(f"""
+    OPTIMIZE delta.`abfss://gold@storage.dfs.core.windows.net/delta/claims_summary/`
+    ZORDER BY (region, claim_month)
+""")
+# ZORDER co-locates data by region + claim_month on disk
+# Power BI filtering by region+month becomes 10x faster
+
+# 2. VACUUM — remove old deleted files (keep 7 days for time travel)
+spark.sql(f"""
+    VACUUM delta.`abfss://gold@storage.dfs.core.windows.net/delta/claims_summary/`
+    RETAIN 168 HOURS
+""")
+```
+
+**ZORDER rule of thumb — pick columns that BI users filter on most:**
+```
+If Power BI always filters: WHERE region = 'North' AND claim_month = '2024-01'
+Then ZORDER BY (region, claim_month)  ← matches the filter pattern
+```
+
+---
+
+## Gold Layer — Register as SQL Table (Databricks Catalog)
+
+After writing Gold Delta files, register them as tables so analysts can query with plain SQL:
+
+```python
+# Register in Databricks Unity Catalog / Hive Metastore
+spark.sql(f"""
+    CREATE TABLE IF NOT EXISTS gold.claims_summary
+    USING DELTA
+    LOCATION 'abfss://gold@storage.dfs.core.windows.net/delta/claims_summary/'
+""")
+
+# Now analysts can query directly:
+# SELECT region, SUM(total_claim_amount) FROM gold.claims_summary WHERE claim_month = '2024-01'
+# Power BI connects to Databricks SQL endpoint → queries this table
+```
+
+---
+
+## Full Bronze → Silver → Gold Flow (End to End)
+
+```
+ADF Master Pipeline
+│
+├── 1. oracle_to_bronze          (ADF Copy Activity + watermark)
+│        ↓ appends to Bronze Delta partitioned by run_date
+│
+├── 2. csv_to_bronze             (ADF ForEach + Archive)
+│        ↓ appends to Bronze Delta partitioned by run_date
+│
+├── 3. bronze_to_silver          (Databricks Notebook)
+│        ↓ reads today's Bronze partition
+│        ↓ clean → dedup → MERGE into Silver Delta
+│
+├── 4. silver_to_gold            (Databricks Notebook)
+│        ↓ reads Silver active records
+│        ↓ aggregate/flatten/filter → partition overwrite into Gold Delta
+│        ↓ OPTIMIZE + ZORDER + VACUUM
+│
+└── 5. Notify on success/failure (ADF Web Activity → email/Teams alert)
+```
+
+---
+
+## What to Say in Interview
+
+| Question | Answer |
+|---|---|
+| **Why separate Gold tables instead of one big one?** | "Each Gold table is purpose-built for a specific consumer. One wide table for everything would make queries slow and hard to maintain. Separate tables let us optimize partitioning and ZORDER per use case." |
+| **Why not let BI tools query Silver directly?** | "Silver is normalized and row-level — every Power BI report would need complex JOINs and GROUP BYs. Gold pre-computes those so report refresh is fast. Also separates transformation concerns from reporting concerns." |
+| **Why `replaceWhere` over full overwrite in Gold?** | "Full overwrite rewrites 16TB every day even though only today's data changed. `replaceWhere` targets only the affected partition — much faster, cheaper, and preserves Delta's time travel history for older partitions." |
+| **What does ZORDER actually do?** | "It physically co-locates related data on disk based on the ZORDER columns. When a query filters on those columns, Delta's data skipping reads far fewer files. Without ZORDER, Spark scans all files even for a narrow filter." |
+
+---
+
+Want to go to **Step 5 — ADF Master Orchestration** (how all 4 stages are wired together with error handling, retries, and alerts), or jump to **Step 6 — CI/CD** in detail?
