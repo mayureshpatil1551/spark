@@ -3,6 +3,74 @@
 
 ---
 
+## Part - 0
+
+---
+
+### Tell me about yourself / Give me a brief introduction.
+
+Hi, good afternoon, my name is Mayuresh Patil.
+I am a Data Engineer with about 3 years of experience building scalable pipelines and lakehouse architectures across cloud ecosystems.
+
+Currently, I’m working at Cognizant, where I’ve contributed to two major enterprise projects. The first was a 20TB pharmaceutical data migration into Apache Iceberg on AWS S3. I built ingestion pipelines from sources like Oracle, CSV, XML, and Salesforce APIs, and optimized Spark jobs to improve query speeds by 40% and reduce pipeline execution time by 30%.
+
+The second project was an Enterprise Cloud Data Platform (ECDP) for 16TB+ of financial data on Azure. I designed Bronze–Silver–Gold architecture on ADLS Gen2, developed ADF pipelines, wrote PySpark transformation notebooks, and set up CI/CD pipelines for automated deployments.
+
+My technical expertise includes PySpark, SQL, Python, Databricks, ADF, and ADLS Gen2, and I’m certified in Databricks and Microsoft Azure Fundamentals. Beyond the technical side, I follow Medallion architecture principles to ensure strong data lineage and compliance.
+
+In short, I bring a mix of hands‑on engineering, performance optimization, and cloud expertise, and I’m passionate about designing reliable, efficient data solutions that directly support business outcomes.
+
+---
+
+### Explain your FinOps Dataverse project.?
+
+FinOps Dataverse was a Big Data migration project in the pharmaceutical domain. It handled 20TB+ of legacy data across multiple source systems.
+
+My role was Data Engineer, and we followed a Medallion architecture — Raw, Transformation Layer (TL), ATL, and Outbound.
+
+Let me walk you through each layer:
+
+RAW LAYER (Ingestion)
+We ingested data from six different source types — CSV, JSON, XML files from S3; Oracle tables; Snowflake tables; Salesforce REST API; and Smartsheet API. For each source type, I wrote separate generic PySpark code so the same framework could be reused for any table or file in that source system. We landed everything into Apache Iceberg tables in the Raw layer. We supported both full load and incremental merge, and handled token expiry for APIs automatically with retry logic.
+
+TRANSFORMATION LAYER (TL & ATL)
+From Raw, we applied data cleansing, type casting, deduplication, and business validations before loading into the TL Iceberg tables — always using incremental merge. I also resolved Spark performance issues here — skew handling, small file problem, partitioning, and bucketing. This reduced pipeline execution time by 30% and improved 300+ analytical query speeds by 40%.
+
+OUTBOUND LAYER
+Finally, we synced the processed data to Oracle tables and CSV flat files for downstream consumers — with zero manual intervention.
+
+One key achievement I'm proud of: I built Python scripts that auto-generated SQL configuration files, which saved the team 15+ hours per week of manual setup work.
+
+We also delivered the SAP financial hierarchy migration — which was estimated at 8 weeks — in just 2.5 weeks, 60% faster than planned. That PoC secured $5,000 in immediate revenue for the business unit.
+
+All code was managed in GitHub, and orchestration was done via Nabu Modak, an enterprise pipeline orchestration tool.
+
+---
+
+### Explain your ECDP — eClinical Data Platform project.
+ECDP is an Enterprise Cloud Data Platform that processes 16TB+ of financial data on Azure. My role was Data Engineer, and the key technologies were ADF, Databricks, Delta Lake, ADLS Gen2, and CI/CD through Azure DevOps.
+
+We followed the Medallion architecture — Bronze, Silver, and Gold layers.
+
+ARCHITECTURE OVERVIEW
+Bronze layer is the raw landing zone on ADLS Gen2 — raw files land here as-is with no transformation. Silver layer holds cleaned, validated Delta tables on Databricks. Gold layer holds aggregated, business-ready Delta tables used by BI tools.
+
+BRONZE LAYER — DATA INGESTION (via ADF)
+I built ADF pipelines to ingest data from two source systems: CSV flat files and Oracle database tables. For Oracle, we used a watermark-based incremental pattern — storing the last updated timestamp in a control table and fetching only changed rows on each run. For CSV, we used event-based triggers — ADF picks up the file as soon as it arrives in the landing zone. All raw data was loaded into ADLS Gen2 in Parquet format.
+
+SILVER LAYER — TRANSFORMATION (via Databricks + PySpark)
+ADF calls Databricks notebooks using the Databricks Linked Service. In the notebooks, I read from Bronze Parquet files, applied schema enforcement, data type casting, null handling, and deduplication. The final write to Silver is always using Delta MERGE — so the load is incremental and idempotent, meaning even if a pipeline reruns, data is not duplicated.
+
+GOLD LAYER — AGGREGATION
+From Silver Delta tables, I created Gold-layer aggregated tables for analytics and reporting. I applied Delta OPTIMIZE and Z-ORDER on high-filter columns to speed up BI queries significantly.
+
+CI/CD PIPELINE
+This is something I'm proud of here. I set up CI/CD using Azure DevOps and GitHub Actions. ADF pipelines are exported as ARM templates and stored in GitHub. Databricks notebooks are also version-controlled. On every merge to the main branch, the CI/CD pipeline automatically deploys to production — Dev, UAT, and Prod each have their own parameter files, so the same code deploys to all three environments without any manual changes.
+
+Overall, this project gave me deep hands-on experience with the full Azure Data Engineering stack — from ingestion to transformation to deployment automation.
+
+
+
 ## PART 1 — CSV (ADLS Gen2) → Bronze Delta (Incremental Load, End to End)
 
 ---
