@@ -231,6 +231,11 @@ bronze/csv/patient_data/load_date=2026-06-11/file.parquet
 ## Step 4 — What Happens Inside Databricks (Silver Notebook)
 
 ```python
+from pyspark.sql.functions import col, current_date, current_timestamp, lower, year, month
+from pyspark.sql.window import Window
+from pyspark.sql import functions as F
+from delta.tables import DeltaTable
+
 # Parameters passed from ADF
 entity_name = dbutils.widgets.get("entity_name")
 bronze_path  = dbutils.widgets.get("bronze_path")
@@ -239,14 +244,45 @@ silver_path  = dbutils.widgets.get("silver_path")
 # Read from Bronze
 df_new = spark.read.parquet(bronze_path)
 
-# Clean
-df_clean = df_new.dropDuplicates(["patient_id"]) \
-                 .dropna(subset=["patient_id"]) \
-                 .withColumn("load_date", current_date())
+# Clean + Transform
+# 1. Deduplicate using window (latest record per patient_id)
+w = Window.partitionBy("patient_id").orderBy(col("updated_at").desc())
+df_clean = df_new.withColumn("rn", F.row_number().over(w)) \
+                 .filter(col("rn") == 1) \
+                 .drop("rn")
+
+# 2. Drop null patient_id
+df_clean = df_clean.dropna(subset=["patient_id"])
+
+# 3. Standardize formats
+df_clean = df_clean.withColumn("patient_id", col("patient_id").cast("string")) \
+                   .withColumn("name", lower(col("name")))
+
+# 4. Derived columns
+df_clean = df_clean.withColumn("year_of_birth", year(col("dob"))) \
+                   .withColumn("month_of_birth", month(col("dob")))
+
+# 5. Fill defaults
+df_clean = df_clean.fillna({"gender": "Unknown", "age": 0})
+
+# 6. Audit columns
+df_clean = df_clean.withColumn("load_date", current_date()) \
+                   .withColumn("etl_insert_ts", current_timestamp())
+
+# --- Optimizations ---
+# Partition pruning: repartition by patient_id to balance skew
+df_clean = df_clean.repartition("patient_id")
+
+# Cache if reused multiple times
+df_clean.cache()
+
+# Enable AQE + skew join handling
+spark.conf.set("spark.sql.adaptive.enabled", "true")
+spark.conf.set("spark.sql.adaptive.skewJoin.enabled", "true")
+spark.conf.set("spark.sql.adaptive.skewedPartitionFactor", "10")
+spark.conf.set("spark.sql.adaptive.skewedPartitionThresholdInBytes", str(256*1024*1024))  # 256MB
 
 # MERGE into Silver Delta Table (Upsert)
-from delta.tables import DeltaTable
-
 silver_table = DeltaTable.forName(spark, f"silver.{entity_name}")
 
 silver_table.alias("target").merge(
@@ -255,6 +291,9 @@ silver_table.alias("target").merge(
 ).whenMatchedUpdateAll() \
  .whenNotMatchedInsertAll() \
  .execute()
+
+# Optional: Optimize Delta table for read performance
+spark.sql(f"OPTIMIZE silver.{entity_name} ZORDER BY (patient_id)")
 ```
 
 ---
