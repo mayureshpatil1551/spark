@@ -532,7 +532,6 @@ BEGIN
     );
 END;
 GO
-```
 
 -- -------------------------------------------------------
 -- 9. Useful Queries for Monitoring
@@ -561,9 +560,11 @@ FROM dbo.load_history
 WHERE load_status = 'FAILED'
 ORDER BY load_start_time DESC;
 
+```
+
 ---
 
-## C:\Users\patil\Downloads\PL_CSV_Incremental_Load.json
+## PL_CSV_Incremental_Load.json
 
 ```json
 {
