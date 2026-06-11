@@ -270,213 +270,509 @@ Would you like me to now walk you through **Step 4 onwards** in the same beginne
 
 
 ---
-
-## The Big Picture First
-
-In ADF, you move pipelines across environments using **Git integration + ARM Templates**. Here's the flow:
-
-```
-DEV (you build here)  →  Git Repo  →  UAT  →  PROD
-```
+Great! Let's continue from Step 4. I'll explain everything like you're doing it for the first time.
 
 ---
 
-## STEP 1 — Connect Your DEV ADF to Git (Azure DevOps)
+## STEP 4 — Create UAT and PROD ADF Instances in Azure Portal
 
-This is the foundation. If not done yet:
+### What is Azure Portal?
+It's the website where you create and manage all Azure resources.
+Go to 👉 **https://portal.azure.com**
 
-1. Open **ADF Studio** (dev)
-2. Click **Manage** (left panel) → **Git configuration**
-3. Click **Configure**
-4. Fill in:
-   - Repository type: **Azure DevOps Git**
-   - Azure DevOps account: your org name
-   - Repository name: e.g. `adf-pipeline-repo`
-   - Collaboration branch: `main`
-   - Publish branch: `adf_publish` ← ADF auto-creates this
-   - Root folder: `/`
-5. Click **Apply**
+### Create ADF for UAT
 
-> Now every pipeline you build in DEV gets saved as JSON files in your Git repo automatically.
+1. In Azure Portal, click **"Create a resource"** (top left)
+2. Search **"Data Factory"** → Click it → Click **Create**
+3. Fill in:
 
----
-
-## STEP 2 — Understand the Two Important Branches
-
-| Branch | What's in it |
+| Field | Value |
 |---|---|
-| `main` | Your pipeline JSON source code |
-| `adf_publish` | ARM Templates — used for deployment |
+| Subscription | Your subscription |
+| Resource Group | `rg-uat` (create new) |
+| Region | Same as DEV (e.g. East US) |
+| Name | `adf-uat` |
+| Version | V2 |
 
-When you click **"Publish"** in ADF Studio, it pushes ARM templates to `adf_publish` branch.
+4. Click **"Review + Create"** → **Create**
+5. Wait 2 minutes — done ✅
+
+### Create ADF for PROD
+Repeat the same steps with:
+- Resource Group: `rg-prod`
+- Name: `adf-prod`
+
+> ⚠️ **Important:** Do NOT connect UAT/PROD ADF to Git. Only DEV is connected to Git. UAT and PROD receive deployments automatically from DevOps pipeline.
 
 ---
 
-## STEP 3 — Handle Environment-Specific Config (The Key Part)
+## STEP 5 — Create Key Vaults for UAT and PROD
 
-Your DEV has different values than UAT/PROD for things like:
-- Storage account URLs
-- Key Vault names
-- Databricks URLs
-- SQL Server names
+### Why separate Key Vaults?
+Each environment needs its own secrets (different passwords, different storage keys). Same secret **names**, different **values**.
 
-ADF handles this using a file called **`ARMTemplateParametersForFactory.json`** — but the better way is to create **separate parameter override files** per environment.
+### Create UAT Key Vault
 
-Create these files in your repo:
+1. Azure Portal → **Create a resource** → Search **"Key Vault"** → Create
+2. Fill in:
 
-**`parameters/uat-parameters.json`**
+| Field | Value |
+|---|---|
+| Resource Group | `rg-uat` |
+| Name | `kv-uat` |
+| Region | Same as DEV |
+| Pricing tier | Standard |
+
+3. Click **Review + Create** → **Create**
+
+### Add Secrets in UAT Key Vault
+
+1. Open `kv-uat` → Click **Secrets** (left menu)
+2. Click **Generate/Import**
+3. Add these one by one:
+
+| Secret Name | Value |
+|---|---|
+| `adls-storage-account-key` | UAT storage account key |
+| `databricks-pat-token` | UAT Databricks token |
+| `sql-control-db-password` | UAT SQL password |
+| `oracle-jdbc-connection-string` | UAT Oracle connection |
+
+> Secret **names must be exactly the same** as DEV. Only values are different.
+
+4. Repeat everything for PROD with `kv-prod`
+
+---
+
+## STEP 6 — Create Parameter Override Files
+
+### Where to create these files?
+In your **Azure DevOps Repo** directly.
+
+### How to create a file in Azure DevOps Repo
+
+1. Go to **dev.azure.com** → Your project → **Repos**
+2. You'll see your repo with branches
+3. Switch to **`main`** branch
+4. Click **"New"** → **"File"**
+
+### Create UAT Parameters File
+
+File name: `uat-parameters.json`
+
 ```json
 {
   "$schema": "https://schema.management.azure.com/schemas/2015-01-01/deploymentParameters.json#",
   "contentVersion": "1.0.0.0",
   "parameters": {
-    "factoryName": { "value": "adf-uat" },
+
+    "factoryName": {
+      "value": "adf-uat"
+    },
+
     "AzureKeyVault_properties_typeProperties_baseUrl": {
       "value": "https://kv-uat.vault.azure.net/"
     },
+
+    "AzureDataLakeStorage_properties_typeProperties_url": {
+      "value": "https://adlsuat.dfs.core.windows.net/"
+    },
+
     "AzureDatabricks_properties_typeProperties_domain": {
-      "value": "https://adb-UAT-ID.azuredatabricks.net"
+      "value": "https://adb-uat-yourworkspaceid.azuredatabricks.net"
     },
+
     "AzureSqlDatabase_connectionString": {
-      "value": "Server=sql-uat.database.windows.net;Database=controldb;"
-    },
-    "ADLS_properties_typeProperties_url": {
-      "value": "https://adlsuat.dfs.core.windows.net"
+      "value": "Server=sql-uat.database.windows.net;Database=controldb;User ID=sqladmin;"
     }
+
   }
 }
 ```
 
-Make a similar `prod-parameters.json` with PROD values.
+5. Click **Commit** → **Commit** (saves the file)
+
+### Create PROD Parameters File
+
+Same steps, file name: `prod-parameters.json`
+
+```json
+{
+  "$schema": "https://schema.management.azure.com/schemas/2015-01-01/deploymentParameters.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+
+    "factoryName": {
+      "value": "adf-prod"
+    },
+
+    "AzureKeyVault_properties_typeProperties_baseUrl": {
+      "value": "https://kv-prod.vault.azure.net/"
+    },
+
+    "AzureDataLakeStorage_properties_typeProperties_url": {
+      "value": "https://adlsprod.dfs.core.windows.net/"
+    },
+
+    "AzureDatabricks_properties_typeProperties_domain": {
+      "value": "https://adb-prod-yourworkspaceid.azuredatabricks.net"
+    },
+
+    "AzureSqlDatabase_connectionString": {
+      "value": "Server=sql-prod.database.windows.net;Database=controldb;User ID=sqladmin;"
+    }
+
+  }
+}
+```
+
+> 💡 **How do I know the parameter names?**
+> After you click Publish in ADF DEV, open the `adf_publish` branch → open `ARMTemplateParametersForFactory.json` — all parameter names are listed there. Copy them exactly.
 
 ---
 
-## STEP 4 — Create the Release Pipeline in Azure DevOps
+## STEP 7 — Create Service Connections
 
-Go to **Azure DevOps → Pipelines → Releases → New Pipeline**
+### What is a Service Connection?
+Azure DevOps needs **permission to access your Azure subscription** to deploy things. A Service Connection is like giving DevOps a **key/access pass** to your Azure account.
 
-### Structure it like this:
+### How to Create Service Connection for UAT
+
+1. In Azure DevOps → Go to **Project Settings** (bottom left gear icon)
+2. Click **Service connections** → **New service connection**
+3. Select **Azure Resource Manager** → Click Next
+4. Select **Service principal (automatic)** → Click Next
+5. Fill in:
+
+| Field | Value |
+|---|---|
+| Scope level | Subscription |
+| Subscription | Select your UAT subscription |
+| Resource Group | `rg-uat` |
+| Service connection name | `UAT-ServiceConnection` |
+
+6. Check **"Grant access permission to all pipelines"**
+7. Click **Save**
+
+Repeat for PROD:
+- Resource Group: `rg-prod`
+- Name: `PROD-ServiceConnection`
+
+---
+
+## STEP 8 — Create the YAML Pipeline File
+
+### What will this YAML file do?
 
 ```
-Artifact (adf_publish branch)
-        ↓
-   Stage 1: UAT
-        ↓
-   Stage 2: PROD  (with manual approval gate)
+When adf_publish branch gets new files
+         ↓
+    Stop UAT triggers
+         ↓
+    Deploy to UAT
+         ↓
+    Start UAT triggers
+         ↓
+    Wait for manual approval
+         ↓
+    Stop PROD triggers
+         ↓
+    Deploy to PROD
+         ↓
+    Start PROD triggers
 ```
 
-### Stage 1 — UAT Deployment
+### Create the YAML File
 
-Add these **tasks** in the UAT stage:
+1. In Azure DevOps → **Repos** → Switch to `main` branch
+2. Click **New** → **File**
+3. Name it: `adf-deploy-pipeline.yml`
+4. Paste this complete YAML:
 
-**Task 1: Stop ADF Triggers** (before deployment)
-- Task type: **Azure PowerShell**
-```powershell
-$triggers = Get-AzDataFactoryV2Trigger -ResourceGroupName "rg-uat" -DataFactoryName "adf-uat"
-$triggers | ForEach-Object { Stop-AzDataFactoryV2Trigger -ResourceGroupName "rg-uat" -DataFactoryName "adf-uat" -Name $_.Name -Force }
+```yaml
+# ============================================
+# ADF Deployment Pipeline
+# DEV → UAT → PROD
+# ============================================
+
+# This pipeline runs automatically when
+# adf_publish branch gets updated
+trigger:
+  branches:
+    include:
+      - adf_publish
+
+# Use the latest Windows machine to run this
+pool:
+  vmImage: 'windows-latest'
+
+# ============================================
+# VARIABLES — change these to your values
+# ============================================
+variables:
+  # UAT settings
+  uat_resourceGroup: 'rg-uat'
+  uat_adfName: 'adf-uat'
+  uat_serviceConnection: 'UAT-ServiceConnection'
+  uat_parametersFile: 'uat-parameters.json'
+
+  # PROD settings
+  prod_resourceGroup: 'rg-prod'
+  prod_adfName: 'adf-prod'
+  prod_serviceConnection: 'PROD-ServiceConnection'
+  prod_parametersFile: 'prod-parameters.json'
+
+  # ARM Template location (auto-generated by ADF)
+  armTemplateFile: '$(Pipeline.Workspace)/adf_publish/ARMTemplateForFactory.json'
+  armParametersFile: '$(Pipeline.Workspace)/adf_publish/ARMTemplateParametersForFactory.json'
+
+# ============================================
+# STAGE 1 — DEPLOY TO UAT
+# ============================================
+stages:
+
+- stage: DeployToUAT
+  displayName: 'Deploy to UAT'
+  jobs:
+  - job: DeployUAT
+    displayName: 'Deploy ADF to UAT Environment'
+
+    steps:
+
+    # --- STEP 1: Download files from adf_publish branch ---
+    - checkout: self
+
+    # --- STEP 2: Stop all triggers in UAT ---
+    - task: AzurePowerShell@5
+      displayName: 'Stop UAT Triggers'
+      inputs:
+        azureSubscription: '$(uat_serviceConnection)'
+        ScriptType: 'InlineScript'
+        Inline: |
+          Write-Host "Stopping all triggers in UAT ADF..."
+          $triggers = Get-AzDataFactoryV2Trigger `
+            -ResourceGroupName "$(uat_resourceGroup)" `
+            -DataFactoryName "$(uat_adfName)"
+          foreach ($trigger in $triggers) {
+            Write-Host "Stopping trigger: $($trigger.Name)"
+            Stop-AzDataFactoryV2Trigger `
+              -ResourceGroupName "$(uat_resourceGroup)" `
+              -DataFactoryName "$(uat_adfName)" `
+              -Name $trigger.Name `
+              -Force
+          }
+          Write-Host "All UAT triggers stopped."
+        azurePowerShellVersion: 'LatestVersion'
+
+    # --- STEP 3: Deploy ARM Template to UAT ---
+    - task: AzureResourceManagerTemplateDeployment@3
+      displayName: 'Deploy ARM Template to UAT'
+      inputs:
+        deploymentScope: 'Resource Group'
+        azureResourceManagerConnection: '$(uat_serviceConnection)'
+        action: 'Create Or Update Resource Group'
+        resourceGroupName: '$(uat_resourceGroup)'
+        location: 'East US'
+        templateLocation: 'Linked artifact'
+        csmFile: '$(armTemplateFile)'
+        csmParametersFile: '$(armParametersFile)'
+        overrideParameters: >
+          -factoryName $(uat_adfName)
+        deploymentMode: 'Incremental'
+
+    # --- STEP 4: Start all triggers in UAT ---
+    - task: AzurePowerShell@5
+      displayName: 'Start UAT Triggers'
+      inputs:
+        azureSubscription: '$(uat_serviceConnection)'
+        ScriptType: 'InlineScript'
+        Inline: |
+          Write-Host "Starting all triggers in UAT ADF..."
+          $triggers = Get-AzDataFactoryV2Trigger `
+            -ResourceGroupName "$(uat_resourceGroup)" `
+            -DataFactoryName "$(uat_adfName)"
+          foreach ($trigger in $triggers) {
+            Write-Host "Starting trigger: $($trigger.Name)"
+            Start-AzDataFactoryV2Trigger `
+              -ResourceGroupName "$(uat_resourceGroup)" `
+              -DataFactoryName "$(uat_adfName)" `
+              -Name $trigger.Name `
+              -Force
+          }
+          Write-Host "All UAT triggers started."
+        azurePowerShellVersion: 'LatestVersion'
+
+# ============================================
+# STAGE 2 — MANUAL APPROVAL GATE
+# ============================================
+- stage: WaitForApproval
+  displayName: 'Wait for PROD Approval'
+  dependsOn: DeployToUAT
+  jobs:
+  - job: waitForValidation
+    displayName: 'Waiting for manual approval...'
+    pool: server        # runs on DevOps server, not a machine
+    steps:
+    - task: ManualValidation@0
+      displayName: 'Approve PROD Deployment'
+      inputs:
+        notifyUsers: |
+          your-email@company.com
+        instructions: |
+          UAT deployment completed successfully.
+          Please verify UAT and approve PROD deployment.
+        onTimeout: 'reject'       # auto-reject if nobody approves in time
+        timeout: '1d'             # wait max 1 day for approval
+
+# ============================================
+# STAGE 3 — DEPLOY TO PROD
+# ============================================
+- stage: DeployToPROD
+  displayName: 'Deploy to PROD'
+  dependsOn: WaitForApproval
+  jobs:
+  - job: DeployPROD
+    displayName: 'Deploy ADF to PROD Environment'
+
+    steps:
+
+    - checkout: self
+
+    # --- STEP 1: Stop all triggers in PROD ---
+    - task: AzurePowerShell@5
+      displayName: 'Stop PROD Triggers'
+      inputs:
+        azureSubscription: '$(prod_serviceConnection)'
+        ScriptType: 'InlineScript'
+        Inline: |
+          Write-Host "Stopping all triggers in PROD ADF..."
+          $triggers = Get-AzDataFactoryV2Trigger `
+            -ResourceGroupName "$(prod_resourceGroup)" `
+            -DataFactoryName "$(prod_adfName)"
+          foreach ($trigger in $triggers) {
+            Stop-AzDataFactoryV2Trigger `
+              -ResourceGroupName "$(prod_resourceGroup)" `
+              -DataFactoryName "$(prod_adfName)" `
+              -Name $trigger.Name `
+              -Force
+          }
+        azurePowerShellVersion: 'LatestVersion'
+
+    # --- STEP 2: Deploy ARM Template to PROD ---
+    - task: AzureResourceManagerTemplateDeployment@3
+      displayName: 'Deploy ARM Template to PROD'
+      inputs:
+        deploymentScope: 'Resource Group'
+        azureResourceManagerConnection: '$(prod_serviceConnection)'
+        action: 'Create Or Update Resource Group'
+        resourceGroupName: '$(prod_resourceGroup)'
+        location: 'East US'
+        templateLocation: 'Linked artifact'
+        csmFile: '$(armTemplateFile)'
+        csmParametersFile: '$(armParametersFile)'
+        overrideParameters: >
+          -factoryName $(prod_adfName)
+        deploymentMode: 'Incremental'
+
+    # --- STEP 3: Start all triggers in PROD ---
+    - task: AzurePowerShell@5
+      displayName: 'Start PROD Triggers'
+      inputs:
+        azureSubscription: '$(prod_serviceConnection)'
+        ScriptType: 'InlineScript'
+        Inline: |
+          Write-Host "Starting all triggers in PROD ADF..."
+          $triggers = Get-AzDataFactoryV2Trigger `
+            -ResourceGroupName "$(prod_resourceGroup)" `
+            -DataFactoryName "$(prod_adfName)"
+          foreach ($trigger in $triggers) {
+            Start-AzDataFactoryV2Trigger `
+              -ResourceGroupName "$(prod_resourceGroup)" `
+              -DataFactoryName "$(prod_adfName)" `
+              -Name $trigger.Name `
+              -Force
+          }
+        azurePowerShellVersion: 'LatestVersion'
 ```
 
-**Task 2: Deploy ARM Template**
-- Task type: **ARM Template Deployment**
-- Subscription: your UAT subscription
-- Resource group: `rg-uat`
-- Template: `$(System.DefaultWorkingDirectory)/_adf_publish/ARMTemplateForFactory.json`
-- Template parameters: `$(System.DefaultWorkingDirectory)/_adf_publish/ARMTemplateParametersForFactory.json`
-- **Override parameters:** point to your `uat-parameters.json`
+5. Click **Commit** → **Commit**
 
-**Task 3: Start ADF Triggers** (after deployment)
-```powershell
-$triggers = Get-AzDataFactoryV2Trigger -ResourceGroupName "rg-uat" -DataFactoryName "adf-uat"
-$triggers | ForEach-Object { Start-AzDataFactoryV2Trigger -ResourceGroupName "rg-uat" -DataFactoryName "adf-uat" -Name $_.Name -Force }
+---
+
+## STEP 9 — Register This YAML as a Pipeline in DevOps
+
+Saving the file is not enough — you need to tell DevOps "use this file as a pipeline."
+
+1. In Azure DevOps → Click **Pipelines** (left menu rocket icon)
+2. Click **New Pipeline**
+3. Select **Azure Repos Git**
+4. Select your repo `adf-pipelines`
+5. Select **Existing Azure Pipelines YAML file**
+6. Branch: `main`
+7. Path: `/adf-deploy-pipeline.yml`
+8. Click **Continue** → **Save** (don't run yet)
+
+---
+
+## STEP 10 — Test the Whole Flow
+
+### Make a small change in DEV ADF
+1. Open ADF DEV Studio
+2. Add a description to any pipeline (small harmless change)
+3. Click **Publish**
+
+### Watch what happens
+1. Go to Azure DevOps → **Pipelines**
+2. You'll see a pipeline run started automatically
+3. Click on it — you'll see 3 stages:
+
+```
+✅ Stage 1: Deploy to UAT    → runs automatically
+⏳ Stage 2: Wait for Approval → waiting...
+⬜ Stage 3: Deploy to PROD   → not started yet
+```
+
+4. Go verify UAT ADF — your change should be there
+5. Come back to DevOps → Click **"Review"** → **"Approve"**
+6. Stage 3 runs → PROD gets deployed ✅
+
+---
+
+## Summary of Everything You've Done
+
+```
+Azure DevOps created
+      ↓
+Git Repo connected to ADF DEV
+      ↓
+UAT + PROD ADF instances created
+      ↓
+UAT + PROD Key Vaults created (same secret names)
+      ↓
+Parameter files created (UAT + PROD values)
+      ↓
+Service Connections created (permission to deploy)
+      ↓
+YAML pipeline created (automated deployment steps)
+      ↓
+Pipeline registered in DevOps
+      ↓
+Click Publish in ADF DEV
+      ↓
+Auto deploys to UAT → Manual approval → Auto deploys to PROD
 ```
 
 ---
 
-## STEP 5 — Add Manual Approval Before PROD
+## Common Errors and Fixes
 
-In the PROD stage in Azure DevOps:
-1. Click the **lightning bolt icon** before the PROD stage
-2. Select **Pre-deployment approvals**
-3. Add approvers (your team lead / manager)
-
-This means UAT deploys automatically, but PROD waits for a human to click **Approve**.
-
----
-
-## STEP 6 — Key Vault Secrets Per Environment
-
-You already have secrets in Key Vault — make sure each environment has its **own Key Vault** with the **same secret names**:
-
-| Secret Name | DEV Value | UAT Value | PROD Value |
-|---|---|---|---|
-| `adls-storage-account-key` | dev key | uat key | prod key |
-| `databricks-pat-token` | dev token | uat token | prod token |
-| `sql-control-db-password` | dev pwd | uat pwd | prod pwd |
-
-> ✅ Since ADF references secrets **by name** (not value), the same pipeline works across all environments automatically — it just hits the right Key Vault.
-
-In your ADF Linked Service for Key Vault, the base URL will be parameterized (from Step 3), so it points to the right vault per environment.
+| Error | Reason | Fix |
+|---|---|---|
+| "Authorization failed" | Service connection has no permission | Go to Key Vault → Access Policies → Add DevOps service principal |
+| "Template not found" | Wrong path to ARM template | Check `adf_publish` branch has the ARM files after Publish |
+| "Trigger not found" | No triggers in ADF yet | Safe to ignore — triggers only exist if you created them |
+| "Parameter not found" | Parameter name mismatch | Open `ARMTemplateParametersForFactory.json` and copy exact names |
 
 ---
 
-## STEP 7 — Watermark Table in SQL Server
-
-Your control DB (watermark + audit) also needs to exist in UAT and PROD SQL servers with the **same schema**. Run your table creation scripts manually once:
-
-```sql
--- Run this in UAT and PROD SQL control DB
-CREATE TABLE watermark_table (
-    TableName NVARCHAR(255),
-    WatermarkValue DATETIME
-);
-
-CREATE TABLE audit_log (
-    PipelineName NVARCHAR(255),
-    RunId NVARCHAR(255),
-    StartTime DATETIME,
-    EndTime DATETIME,
-    Status NVARCHAR(50),
-    RowsLoaded INT
-);
-```
-
----
-
-## Full Flow Summary
-
-```
-Developer builds in DEV ADF
-        ↓
-Raises Pull Request → merges to 'main'
-        ↓
-Clicks "Publish" in ADF Studio
-        ↓
-ARM Templates pushed to 'adf_publish' branch
-        ↓
-Azure DevOps Release Pipeline triggers
-        ↓
-Auto-deploys to UAT (with UAT parameters)
-        ↓
-Team tests in UAT ✅
-        ↓
-Manual Approval
-        ↓
-Deploys to PROD (with PROD parameters)
-```
-
----
-
-## Quick Checklist Before You Start
-
-- [ ] DEV ADF connected to Azure DevOps Git ✅
-- [ ] `adf_publish` branch exists after first Publish ✅
-- [ ] UAT and PROD ADF instances created in Azure
-- [ ] Separate Key Vaults for UAT and PROD with same secret names
-- [ ] UAT and PROD ADLS storage accounts exist
-- [ ] UAT and PROD Databricks workspaces exist
-- [ ] Parameter override files created per environment
-- [ ] Azure DevOps Release Pipeline created
-
----
-
-Want me to go deeper on any specific step — like the ARM template override file, the PowerShell scripts, or setting up the DevOps pipeline with YAML?
+Would you like me to now explain how to **give the DevOps Service Principal access to Key Vault and ADLS**, or how to handle **Databricks linked service deployment** across environments?
