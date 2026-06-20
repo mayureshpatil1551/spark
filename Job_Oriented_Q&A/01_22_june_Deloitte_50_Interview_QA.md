@@ -24,6 +24,30 @@
 | Q47–Q50 | Architecture, Design & Stakeholder Scenarios |
 
 ---
+## 1. What is CI/CD, and how have you implemented it in your project?
+
+CI/CD stands for Continuous Integration and Continuous Deployment. In my project, I used Azure DevOps with YAML pipelines to automate deployment of ADF pipelines and Databricks notebooks across environments. Whenever a developer pushes code to a feature branch, the CI pipeline triggers automatically—it validates the ADF ARM template export and runs basic checks. Once that's merged to the main branch, the CD pipeline picks it up and promotes the changes through DEV, then UAT, then PROD, with approval gates between each stage so nothing reaches production without sign-off.
+
+
+## 2. What is an ARM template, and why do you use it for deployment?
+
+An ARM template is a JSON file that defines Azure resources and their configuration in a declarative way—basically infrastructure as code. In my case, ADF generates an ARM template representing the entire pipeline, linked services, and dataset definitions when I publish. I use that template to deploy consistently across DEV, UAT, and PROD instead of manually recreating pipelines in each environment, which removes human error and keeps environments in sync. I also use parameter files alongside the template so environment-specific values—like the UAT Key Vault URL versus the PROD one—get swapped in automatically during deployment without touching the template itself.
+
+## 3. How do you manage credentials and secrets in your CI/CD pipeline?
+
+I never hardcode credentials anywhere in code or pipeline configuration. All secrets—Oracle passwords, Databricks tokens, storage keys—live in Azure Key Vault, and ADF's managed identity is granted access to retrieve them at runtime. For the DevOps pipeline itself, if I need a secret during deployment (say, a service principal credential for authenticating to Azure), I link the Key Vault into the pipeline as a variable group in Azure DevOps Library, so the actual secret value is never visible in logs or YAML files.
+
+## 4. Walk me through your branching and environment promotion strategy.
+
+I follow a standard DEV to UAT to PROD flow. Developers work on feature branches, raise a pull request into the main/collaboration branch, and that triggers the CI build. From there, the release pipeline deploys first to DEV automatically for sanity testing, then requires manual approval to push to UAT for broader testing, and another approval gate before PROD. Each environment has its own Key Vault, storage account, and ADF instance, and the ARM template parameter files keep the configuration isolated per environment so nothing from DEV accidentally points to a PROD resource.
+
+## 5. How do you handle a failed deployment or pipeline run—do you have a rollback strategy?
+
+If a deployment fails partway through, Azure DevOps release pipelines let me redeploy the last known-good ARM template version, since every successful deployment is versioned and stored as a release artifact. For pipeline run failures specifically—like a Databricks notebook activity failing mid-run—I rely on the activity dependency chain in ADF combined with the watermark table; since the watermark only updates after a successful copy, a failed run just gets retried from the same starting point next execution without double-processing or skipping data. I also have failure-path activities wired up to send alerts via Teams or email so issues get caught quickly rather than silently failing.
+
+---
+
+---
 
 ## SECTION 1 — Azure Data Factory (ADF)
 ### Q1–Q8
