@@ -2383,3 +2383,76 @@ Oracle (on-prem) → [ADF + SHIR] → ADLS Gen2 Bronze → [Databricks PySpark] 
 ---
 
 *Prepared for Deloitte Data Engineer II Interview — covers all JD requirements mapped to your profile*
+
+
+
+
+**Azure Event Hubs**
+
+Think of it as a massive, super-fast mailbox that can receive millions of messages per second. It's used when you have a constant stream of events coming in — like financial transactions, IoT sensor readings, or clickstream data — and you need to capture all of them without losing any, then process them in near real-time.
+
+Interview-ready definition: "Event Hubs is a real-time event streaming service. Producers push events into it, and consumers (like Databricks Structured Streaming) read from it continuously. It retains events for a configurable period — say 7 days — so if a consumer goes down, it can replay from where it left off."
+
+Real use case to mention: "If a bank wanted real-time fraud detection on transactions, instead of waiting for a nightly batch, transactions would stream into Event Hub the moment they happen, and Databricks would process them within seconds using Structured Streaming."
+
+Key term to drop: it works on the same protocol as Apache Kafka, so if someone knows Kafka, you can say "it's Azure's managed, Kafka-compatible alternative."
+
+---
+
+**Azure Synapse Analytics**
+
+This is Azure's big data analytics and data warehousing service. The simplest way to describe it: it combines SQL-based data warehousing (like a traditional data warehouse) with big data processing (like Spark) in one workspace.
+
+Interview-ready definition: "Synapse is an analytics platform that lets you run SQL queries on huge volumes of structured data using dedicated SQL pools, and also run Spark jobs for big data processing — all in a single workspace with shared metadata."
+
+Where it fits vs Databricks: "Databricks is generally stronger for heavy ETL, machine learning, and complex PySpark transformations. Synapse is strong when your team is SQL-first and you want a data warehouse experience with serverless SQL queries directly over your data lake, plus tight integration with Power BI."
+
+If asked "did you use Synapse" and you haven't hands-on: be honest — "My direct production experience is with Databricks for the heavy lift transformation work, but I understand Synapse serves a similar role with a stronger SQL-warehouse angle, often used by teams that want a more SQL-native experience or need Synapse's dedicated SQL pools for very large structured reporting workloads."
+
+---
+
+**Azure Functions**
+
+This is serverless compute — you write a small piece of code (a "function"), and Azure runs it only when triggered, then shuts it down. You don't manage any servers.
+
+Interview-ready definition: "Azure Functions let you run code in response to an event — a file landing in storage, an HTTP request, a message in a queue, or a timer — without provisioning or managing infrastructure. You pay only for the time the function actually runs."
+
+Real use case to mention: "I'd use a Functions to validate a file the moment it lands in ADLS — check the filename pattern, size, and basic structure — and then trigger the ADF pipeline only if it passes validation. Without Functions, you'd have to run a scheduled check every few minutes even when nothing has changed, which wastes compute."
+
+Key point: Functions are event-driven and short-lived (typically seconds to a few minutes), which is different from Databricks notebooks that handle the heavy data processing.
+
+---
+
+**Logic Apps**
+
+This is a visual, low-code workflow orchestration tool — think of it as connecting different services together (Outlook, Teams, SharePoint, databases, APIs) using a drag-and-drop designer instead of writing code.
+
+Interview-ready definition: "Logic Apps is a workflow automation service used to orchestrate business processes and integrate different systems with minimal code. It has hundreds of pre-built connectors — Outlook, Slack, Salesforce, SQL Server, REST APIs."
+
+Real use case to mention: "I'd use Logic Apps for the alerting layer of a pipeline — when an ADF pipeline fails, it calls a Logic App via a Web Activity, and the Logic App sends an email to the on-call engineer, posts a message to Teams, and logs the incident to a ticketing system — all without writing a single line of orchestration code."
+
+Functions vs Logic Apps — the question they might ask: "Functions is for when you need to write actual code logic — like custom validation or transformation. Logic Apps is for when you're stitching together existing services and don't need complex code, just configuration."
+
+---
+
+**Queue Storage / Event Grid**
+
+These are two different things often mentioned together, so separate them clearly.
+
+**Queue Storage** is a simple message queue — think of it as a to-do list that different parts of your system can add tasks to and pick tasks off of, one at a time, in order.
+
+Interview-ready definition: "Queue Storage is a simple, reliable message queue used to decouple parts of a system. A producer adds a message, a consumer picks it up and processes it, then deletes it. It's simple, cheap, and great for basic task queuing."
+
+**Event Grid** is different — it's a pub-sub event routing service. It doesn't carry the message payload itself usually; it tells you that something happened and where to go look.
+
+Interview-ready definition: "Event Grid is an event routing service — when something happens in Azure, like a new file landing in Blob Storage or a VM being created, Event Grid detects that event and pushes a notification to whatever is subscribed — an Azure Function, Logic App, or another endpoint. It's the glue that makes event-driven architecture possible without polling."
+
+The comparison they'll likely ask: "Queue Storage is for task processing — work items waiting to be picked up. Event Grid is for event notification — telling subscribers that something happened, in near real-time, with very high scale, like millions of events per second."
+
+---
+
+**How to tie all five together if asked "design an event-driven pipeline":**
+
+"A file lands in ADLS → Event Grid detects the BlobCreated event → triggers an Azure Function to do quick validation → if valid, the Function either calls ADF directly or drops a message in Queue Storage for a downstream process to pick up → meanwhile, if anything fails, a Logic App handles sending the alert email or Teams message → and if this were a high-volume streaming scenario instead of file-based, Event Hubs would be the ingestion layer instead of file landing, feeding directly into Databricks Structured Streaming → and Synapse could be the SQL-based reporting layer on top of the final curated data, alongside or instead of Snowflake."
+
+That one sentence shows you understand how all five pieces fit together in a real architecture, which is usually exactly what they're testing for.
