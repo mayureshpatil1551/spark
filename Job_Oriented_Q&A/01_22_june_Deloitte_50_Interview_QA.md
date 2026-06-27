@@ -269,6 +269,10 @@ In the next ADF activity, reference this output:
 
 **Answer:**
 
+In my ECDP project, we primarily used Copy Activities for ingestion and Databricks notebooks for transformations. We did not use Mapping Data Flows because our transformation logic was complex and required PySpark and Delta Lake features. However, I understand that Mapping Data Flows are suitable for low-code transformations such as filters, joins, derived columns, and aggregations
+
+----
+
 Yes, I've used Mapping Data Flows in ADF, though I primarily used Databricks notebooks for complex transformations in ECDP.
 
 **Mapping Data Flows are good for:**
