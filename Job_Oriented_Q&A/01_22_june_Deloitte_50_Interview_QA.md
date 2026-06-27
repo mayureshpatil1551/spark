@@ -342,6 +342,11 @@ CREATE TABLE pipeline_audit (
 
 **Answer:**
 
+IR is compute infrastructure used by ADF to move and transform data.
+
+AutoResolve IR --> Used for cloud to cloud.
+SHIR --> On-prem to Cloud.
+
 **Azure Integration Runtime (Azure IR):**
 Managed by Microsoft, serverless, no setup needed. Works for cloud-to-cloud connections — ADLS to ADLS, Azure SQL to ADLS, REST APIs over the internet.
 
