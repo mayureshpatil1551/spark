@@ -299,6 +299,10 @@ If the transformation requires a data engineer and involves > 5GB of data → Da
 
 **Answer:**
 
+In our project, we monitored Azure Data Factory pipelines using the ADF Monitor section. We tracked every pipeline execution to ensure that data was loaded successfully and on time. We monitored pipeline status, activity failures, execution duration, data volumes, and retry attempts. For production failures, we configured alerts and logged execution details into an audit table so that we could quickly identify and troubleshoot issues.
+
+-------
+
 **In ADF Monitor (built-in):**
 - Pipeline run history — status, duration, start/end time
 - Activity-level drill-down — which activity failed, error message, input/output
