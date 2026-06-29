@@ -12,9 +12,10 @@
 Hi, good afternoon, my name is Mayuresh Patil.
 I am a Data Engineer with about 3 years of experience building scalable pipelines and lakehouse architectures across cloud ecosystems.
 
-Currently, I’m working at Cognizant, where I’ve contributed to two major enterprise projects. The first was a 20TB pharmaceutical data migration into Apache Iceberg on AWS S3. I built ingestion pipelines from sources like Oracle, CSV, XML, and Salesforce APIs, and optimized Spark jobs to improve query speeds by 40% and reduce pipeline execution time by 30%.
+Currently, I’m working at Cognizant, where I’ve contributed to two major enterprise projects. 
+The one was a e-clinical data plateform, in that we are pharmaceutical data migration into Apache Iceberg on AWS S3. I built ingestion pipelines from sources like Oracle, CSV, XML, and Salesforce APIs, and optimized Spark jobs to improve query speeds by 40% and reduce pipeline execution time by 30%.
 
-The second project was an Enterprise Cloud Data Platform (ECDP) for 16TB+ of financial data on Azure. I designed Bronze–Silver–Gold architecture on ADLS Gen2, developed ADF pipelines, wrote PySpark transformation notebooks, and set up CI/CD pipelines for automated deployments.
+The second one was an FinOps Dataverse for 16TB+ of financial data on Azure. I designed Bronze–Silver–Gold architecture on ADLS Gen2, developed ADF pipelines, wrote PySpark transformation notebooks, and set up CI/CD pipelines for automated deployments.
 
 My technical expertise includes PySpark, SQL, Python, Databricks, ADF, and ADLS Gen2, and I’m certified in Databricks and Microsoft Azure Fundamentals. Beyond the technical side, I follow Medallion architecture principles to ensure strong data lineage and compliance.
 
