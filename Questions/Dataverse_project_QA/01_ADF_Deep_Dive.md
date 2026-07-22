@@ -23,7 +23,7 @@ In short, I bring a mix of hands‑on engineering, performance optimization, and
 
 ---
 
-### Explain your FinOps Dataverse project.?
+### Explain your ECDP — eClinical Data Platform project.
 
 FinOps Dataverse was a Big Data migration project in the pharmaceutical domain. It handled 20TB+ of legacy data across multiple source systems.
 
@@ -48,7 +48,7 @@ All code was managed in GitHub, and orchestration was done via Nabu Modak, an en
 
 ---
 
-### Explain your ECDP — eClinical Data Platform project.
+### Explain your FinOps Dataverse project.?
 ECDP is an Enterprise Cloud Data Platform that processes 16TB+ of financial data on Azure. My role was Data Engineer, and the key technologies were ADF, Databricks, Delta Lake, ADLS Gen2, and CI/CD through Azure DevOps.
 
 We followed the Medallion architecture — Bronze, Silver, and Gold layers.
