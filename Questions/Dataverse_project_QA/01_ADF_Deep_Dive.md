@@ -57,7 +57,7 @@ ARCHITECTURE OVERVIEW
 Bronze layer is the raw landing zone on ADLS Gen2 — raw files land here as-is with no transformation. Silver layer holds cleaned, validated Delta tables on Databricks. Gold layer holds aggregated, business-ready Delta tables used by BI tools.
 
 BRONZE LAYER — DATA INGESTION (via ADF)
-I built ADF pipelines to ingest data from two source systems: CSV flat files and Oracle database tables. For Oracle, we used a watermark-based incremental pattern — storing the last updated timestamp in a control table and fetching only changed rows on each run. For CSV, we used event-based triggers — ADF picks up the file as soon as it arrives in the landing zone. All raw data was loaded into ADLS Gen2 in Parquet format.
+I built ADF pipelines to ingest data from two source systems: CSV flat files and Oracle database tables. For incremental load, we used a watermark-based incremental pattern — storing the last updated timestamp in a control table and fetching only changed rows on each run. All raw data was loaded into ADLS Gen2 in Parquet format.
 
 SILVER LAYER — TRANSFORMATION (via Databricks + PySpark)
 ADF calls Databricks notebooks using the Databricks Linked Service. In the notebooks, I read from Bronze Parquet files, applied schema enforcement, data type casting, null handling, and deduplication. The final write to Silver is always using Delta MERGE — so the load is incremental and idempotent, meaning even if a pipeline reruns, data is not duplicated.
