@@ -10,7 +10,9 @@
 
 **71. What is Unity Catalog, and what problem does it solve?**
 
+
 **Short:** Unity Catalog is Databricks' centralized governance layer — it gives you one place to manage data access, permissions, and lineage across all workspaces, instead of managing access separately per workspace/cluster.
+
 
 **Detailed:** "Unity Catalog is part of my technical skill set from working in Azure Databricks environments. The core problem it solves is fragmented governance — without it, access control tends to be managed per-cluster or per-workspace, which gets inconsistent and hard to audit as an organization scales. Unity Catalog centralizes that: permissions, table definitions, and lineage are managed in one place and apply consistently regardless of which workspace or cluster someone is using, which matters a lot in a regulated environment like the pharmaceutical and financial data I worked with, where knowing exactly who can access what is a compliance requirement, not just a nice-to-have."
 
@@ -30,6 +32,24 @@
 
 **Detailed:** "In my own projects, I effectively worked with data stored at explicit ADLS Gen2 / S3 paths as part of a structured Medallion architecture (Bronze/Silver/Gold), which conceptually aligns more with the External Table pattern — the data's location and lifecycle were intentional and tied to our storage architecture, not something I wanted a table drop to accidentally delete. I'd choose External Tables when the underlying files need to persist independently of the table registration — for example, if multiple tools or teams need to reference the same physical data — and Managed Tables when I want Databricks to fully own the data lifecycle and don't need external access to the raw files."
 
+`python
+-- Managed table (data stored in Databricks default warehouse location)
+CREATE TABLE my_managed_table (
+    id INT,
+    name STRING
+)
+USING DELTA;
+
+`sql
+-- External table (data stored in user-specified location)
+CREATE TABLE my_external_table (
+    id INT,
+    name STRING
+)
+USING DELTA
+LOCATION 'abfss://container@storageaccount.dfs.core.windows.net/external-data/';
+
+
 **74. How does Unity Catalog handle access control — catalog vs. schema vs. table level grants?**
 
 **Short:** Unity Catalog supports GRANT statements at each level of the hierarchy — granting access at the **catalog** level applies broadly to everything inside it, at the **schema** level narrows it to one logical database, and at the **table** level gives the most fine-grained control over a single object. Permissions can also cascade down (catalog-level grants can apply to schemas/tables within, unless overridden).
@@ -41,6 +61,14 @@
 **Short:** A **Secret Scope** is a secure container for storing credentials that notebooks can reference without exposing the actual values. It can be backed by **Azure Key Vault** (secrets actually live in Key Vault, Databricks just references them) or be **Databricks-backed** (secrets stored directly within Databricks' own secret store).
 
 **Detailed:** "Secure credential handling was something I took seriously throughout my work — for example, in my VoltGrid project I configured authentication using Microsoft Entra ID, Service Principal, and Azure Key Vault so credentials were never hardcoded. The same principle applies to Databricks notebooks: instead of pasting a password or API key into code, you'd retrieve it via `dbutils.secrets.get(scope, key)`, where the scope is backed by either Azure Key Vault (my preference, since it keeps one central, auditable place for secrets across both ADF and Databricks) or Databricks' own secret store. I'd favor Azure Key Vault-backed scopes specifically so credential management stays consistent whether the code is being called from ADF or run directly in Databricks."
+
+🔹 Types of Secret Scopes
+
+    1. Databricks‑backed Secret Scope - Secrets are stored inside Databricks’ own secret store. Best for **development or small projects**
+
+    2. Azure Key Vault‑backed Secret Scope - Secrets are stored in Azure Key Vault. Databricks refer them only, not actually store them. Best for **production workloads**.
+
+dbutils.secrets.get(scope="my_scope", key="my_secret")
 
 ---
 
@@ -59,6 +87,14 @@
 **Short:** Auto-scaling automatically adds or removes worker nodes within a defined min/max range based on current workload demand, so you get enough compute during heavy processing without paying for that capacity when it's not needed.
 
 **Detailed:** "Given the variable volumes I dealt with — daily batch loads that could vary depending on source system activity — auto-scaling made practical sense over a fixed-size cluster. It meant the cluster could scale up during a heavier load day to keep runtime within SLA, and scale back down afterward rather than sitting over-provisioned. This ties into the same performance and efficiency mindset behind the runtime and latency improvements I delivered — getting the right amount of compute for the actual workload, not a fixed guess."
+
+"autoscale": {
+  "min_workers": 8,
+  "max_workers": 64
+},
+"driver_node_type_id": "Standard_DS4_v2",
+"node_type_id": "Standard_DS5_v2",
+"autotermination_minutes": 30
 
 ---
 
