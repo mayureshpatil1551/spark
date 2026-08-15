@@ -9,11 +9,15 @@
 ### L1
 
 **71. What is Unity Catalog, and what problem does it solve?**
+
 **Short:** Unity Catalog is Databricks' centralized governance layer — it gives you one place to manage data access, permissions, and lineage across all workspaces, instead of managing access separately per workspace/cluster.
+
 **Detailed:** "Unity Catalog is part of my technical skill set from working in Azure Databricks environments. The core problem it solves is fragmented governance — without it, access control tends to be managed per-cluster or per-workspace, which gets inconsistent and hard to audit as an organization scales. Unity Catalog centralizes that: permissions, table definitions, and lineage are managed in one place and apply consistently regardless of which workspace or cluster someone is using, which matters a lot in a regulated environment like the pharmaceutical and financial data I worked with, where knowing exactly who can access what is a compliance requirement, not just a nice-to-have."
 
 **72. What is the three-level namespace (catalog.schema.table)?**
+
 **Short:** Unity Catalog organizes data into a three-level hierarchy: **catalog** (top-level container, often mapping to an environment or business unit) → **schema** (database, a logical grouping within a catalog) → **table** (the actual data). So a full reference looks like `catalog.schema.table`.
+
 **Detailed:** "This is a step up from the traditional two-level `schema.table` naming in most databases. In practice, this structure would let an organization like the ones I worked for cleanly separate, for example, a `finance` catalog from a `clinical` catalog, each with their own schemas and tables, but still governed and queryable through one consistent Unity Catalog metastore — rather than needing entirely separate systems or ad hoc naming conventions to keep domains apart."
 
 ---
@@ -21,15 +25,21 @@
 ### L2
 
 **73. Managed Table vs. External Table — what's the difference?**
+
 **Short:** A **Managed Table** has both its metadata and underlying data files controlled by Unity Catalog/Databricks — if you drop the table, the data is deleted too. An **External Table** has its metadata registered in Unity Catalog, but the actual data lives at a location you control (like your own ADLS path) — dropping the table only removes the metadata, not the underlying files.
+
 **Detailed:** "In my own projects, I effectively worked with data stored at explicit ADLS Gen2 / S3 paths as part of a structured Medallion architecture (Bronze/Silver/Gold), which conceptually aligns more with the External Table pattern — the data's location and lifecycle were intentional and tied to our storage architecture, not something I wanted a table drop to accidentally delete. I'd choose External Tables when the underlying files need to persist independently of the table registration — for example, if multiple tools or teams need to reference the same physical data — and Managed Tables when I want Databricks to fully own the data lifecycle and don't need external access to the raw files."
 
 **74. How does Unity Catalog handle access control — catalog vs. schema vs. table level grants?**
+
 **Short:** Unity Catalog supports GRANT statements at each level of the hierarchy — granting access at the **catalog** level applies broadly to everything inside it, at the **schema** level narrows it to one logical database, and at the **table** level gives the most fine-grained control over a single object. Permissions can also cascade down (catalog-level grants can apply to schemas/tables within, unless overridden).
+
 **Detailed:** "This is conceptual knowledge for me rather than something I personally administered — access control was generally handled at a platform/admin level on my projects. But understanding the model: I'd grant access at the catalog level for broad organizational boundaries (e.g., a 'finance' team gets access to the whole finance catalog), and drop down to schema or table-level grants when access needs to be more targeted — for example, if only a subset of tables within a schema contain sensitive PII or regulated data and need tighter restrictions than the rest of that schema."
 
 **75. How do you access secrets securely in a Databricks notebook — Secret Scopes backed by Azure Key Vault vs. Databricks-backed secret scopes?**
+
 **Short:** A **Secret Scope** is a secure container for storing credentials that notebooks can reference without exposing the actual values. It can be backed by **Azure Key Vault** (secrets actually live in Key Vault, Databricks just references them) or be **Databricks-backed** (secrets stored directly within Databricks' own secret store).
+
 **Detailed:** "Secure credential handling was something I took seriously throughout my work — for example, in my VoltGrid project I configured authentication using Microsoft Entra ID, Service Principal, and Azure Key Vault so credentials were never hardcoded. The same principle applies to Databricks notebooks: instead of pasting a password or API key into code, you'd retrieve it via `dbutils.secrets.get(scope, key)`, where the scope is backed by either Azure Key Vault (my preference, since it keeps one central, auditable place for secrets across both ADF and Databricks) or Databricks' own secret store. I'd favor Azure Key Vault-backed scopes specifically so credential management stays consistent whether the code is being called from ADF or run directly in Databricks."
 
 ---
@@ -39,11 +49,15 @@
 ### L1
 
 **76. What factors affect Databricks cluster cost?**
+
 **Short:** Cluster size (number/type of worker nodes), whether auto-scaling is enabled (and its min/max range), the DBU (Databricks Unit) rate tied to the cluster/runtime tier, and how long the cluster stays running (idle time matters if it's not auto-terminating).
+
 **Detailed:** "Cost-awareness was part of how I approached pipeline design generally, even where cost wasn't the headline metric in my resume bullets. The factors I paid attention to: right-sizing the cluster to the actual data volume rather than over-provisioning (especially since I was processing 10M+ records daily and wanted the cluster to match that, not be idle-oversized), using auto-scaling so the cluster could grow during heavy load and shrink during lighter periods, and making sure clusters had auto-termination configured so they didn't sit running (and billing) after a job finished."
 
 **77. What is auto-scaling, and why use it?**
+
 **Short:** Auto-scaling automatically adds or removes worker nodes within a defined min/max range based on current workload demand, so you get enough compute during heavy processing without paying for that capacity when it's not needed.
+
 **Detailed:** "Given the variable volumes I dealt with — daily batch loads that could vary depending on source system activity — auto-scaling made practical sense over a fixed-size cluster. It meant the cluster could scale up during a heavier load day to keep runtime within SLA, and scale back down afterward rather than sitting over-provisioned. This ties into the same performance and efficiency mindset behind the runtime and latency improvements I delivered — getting the right amount of compute for the actual workload, not a fixed guess."
 
 ---
@@ -51,15 +65,21 @@
 ### L2
 
 **78. What's the "rule of thumb" for Delta Lake file size — how do you decide optimal partition size?**
+
 **Short:** A common rule of thumb is targeting file sizes around **128MB–1GB** per file (Databricks' `OPTIMIZE` with auto-compaction generally aims for around 1GB by default in many setups) — too many small files hurts read performance (overhead), while too few very large files can hurt parallelism and increase shuffle/spill risk.
+
 **Detailed:** "This directly connects to the file compaction work I did in FinOps Dataverse — tuning workloads with Z-Ordering, clustering, and file compaction to cut query latency by 40%. In practice, I aimed to avoid the small-file problem (many files well under 128MB, which added read overhead) by running `OPTIMIZE` regularly, letting Delta compact fragmented small files from incremental writes into larger, more efficient files. I didn't obsess over hitting an exact file size target — the practical approach was: monitor query performance and file counts, and if I saw degraded read performance correlating with a high file count, that was the signal to run or schedule compaction."
 
 **79. How do you tune spark.sql.shuffle.partitions — what happens if it's too high or too low?**
+
 **Short:** `spark.sql.shuffle.partitions` controls how many partitions Spark creates after a shuffle (default is 200, regardless of data size). Too high for a small dataset creates many tiny tasks with wasted overhead; too low for a large dataset creates too few, overly large partitions that can cause memory pressure, spill to disk, or slow, unbalanced tasks.
+
 **Detailed:** "Partition tuning was one of the biggest levers in my optimization work — it's a big part of what let me cut a core pipeline's runtime from 4 hours to 58 minutes in eCDP. I didn't rely on Spark's default 200 shuffle partitions blindly; I'd adjust this based on actual data volume — for a smaller incremental daily load, a lower shuffle partition count avoided excessive tiny-task overhead, while for our larger full-load or backfill scenarios, I'd increase it so no single partition became a memory-pressure bottleneck. Also worth mentioning: with Adaptive Query Execution enabled in newer Databricks Runtime versions, Spark can auto-coalesce shuffle partitions after the fact, which reduced how much manual tuning I needed to do here directly."
 
 **80. How would you reduce cost on a daily job processing only a small incremental dataset — job cluster sizing, cluster pools, or spot instances?**
+
 **Short:** Use a right-sized (small) Job Cluster instead of a large All-Purpose cluster, use cluster pools to cut startup latency/cost for frequent small runs, and consider spot/low-priority instances for cost savings on non-critical, retriable workloads — while avoiding over-provisioning for a small, predictable daily volume.
+
 **Detailed:** "This maps closely to the incremental loading work I actually did — after implementing watermark-based incremental loads (which reduced FinOps Dataverse pipeline execution time by 30%), the daily processing volume became much smaller and more predictable than a full reload. In that scenario, I'd right-size the Job Cluster to match the smaller incremental volume rather than keeping a large cluster provisioned for a full-load scenario that no longer applies daily. I haven't personally configured spot/low-priority instances, so I'd flag that as something I understand conceptually — they're cheaper but can be reclaimed mid-job, so I'd only use them for non-time-critical or easily-retriable steps, not for a pipeline with a strict SLA."
 
 ---
@@ -69,11 +89,15 @@
 ### L1
 
 **81. How do you schedule a Databricks notebook to run daily — Databricks Jobs vs. ADF triggering a notebook activity?**
+
 **Short:** Both work: a **Databricks Job** natively schedules the notebook within Databricks itself. Alternatively, **ADF's Databricks Notebook Activity** lets ADF trigger and monitor the notebook as one step inside a larger ADF pipeline that also handles other orchestration (like Copy Activities before/after it).
+
 **Detailed:** "In my projects, the pipelines were designed end-to-end across both tools — ADF handled ingestion orchestration (pulling from Oracle and flat files into ADLS Gen2), and Databricks notebooks handled the transformation logic. So scheduling purely within Databricks Jobs wouldn't have made sense in isolation, since the notebook was one step within a broader pipeline that also needed ADF's ingestion and monitoring capabilities. I'd use a pure Databricks Job when the entire workflow lives inside Databricks with no external orchestration needs; I'd use ADF's Notebook Activity when the notebook is one piece of a larger pipeline that spans multiple systems, which was exactly my situation."
 
 **82. What is a Databricks Job with multiple tasks (task orchestration within Databricks itself)?**
+
 **Short:** Modern Databricks Jobs support multiple tasks within a single job, each potentially a different notebook/script, with defined dependencies between them (Task B runs only after Task A succeeds) — essentially giving you a mini-DAG/orchestration capability natively inside Databricks, without needing an external orchestrator for purely Databricks-internal workflows.
+
 **Detailed:** "I'm familiar with this conceptually, though my own orchestration was primarily done through ADF rather than multi-task Databricks Jobs, since our pipelines needed to coordinate with non-Databricks steps like ADF Copy Activities pulling from Oracle. Multi-task Jobs would make more sense for a workflow that's entirely self-contained within Databricks — for example, if Bronze, Silver, and Gold transformations were all separate notebooks with clear dependencies and nothing outside Databricks was involved, you could define that whole chain as one multi-task Job instead of needing ADF to orchestrate each step."
 
 ---
@@ -85,7 +109,9 @@
 **Detailed:** "I used GitHub as my version control tool generally across my work, and I understand the Databricks Repos integration conceptually even though I haven't personally set up a full CI/CD deployment pipeline for Databricks notebooks specifically — my ADF pipelines went through the Git-integrated ARM template deployment process I described earlier. The Databricks equivalent follows a similar philosophy: notebooks live in a Git-backed Repo rather than being edited ad hoc in the workspace, changes go through pull requests and code review, and a CI/CD tool then promotes tested notebook versions and job configs across environments using the Databricks CLI or REST API — keeping deployment controlled and auditable rather than manual, which matters in a regulated data environment like the ones I worked in."
 
 **84. When would you trigger a Databricks notebook from ADF versus running everything natively as a Databricks Workflow? Trade-offs?**
+
 **Short:** Trigger from ADF when the workflow spans multiple systems (e.g., ingestion from Oracle, then transformation in Databricks, then loading into Azure SQL) and you want one orchestrator with unified monitoring across all of it. Run natively as a Databricks Workflow when the entire pipeline is self-contained within Databricks and doesn't need to coordinate with non-Databricks steps — simpler, one less tool in the chain.
+
 **Detailed:** "This is exactly the architecture I actually built — in FinOps Dataverse, ADF handled ingestion from Oracle and flat files into ADLS Gen2, and then triggered Databricks notebooks for the cleansing, transformation, and business rule logic, with curated data eventually loaded into Azure SQL Database. I used ADF as the orchestrator because the pipeline genuinely spanned multiple systems — Oracle, ADLS, Databricks/Delta Lake, and Azure SQL — and having one place to monitor the entire chain's success/failure status was valuable operationally. If the entire workflow had lived purely within Databricks — say, if all sources were already Delta tables and the only work was Databricks-to-Databricks transformation — a native Databricks Workflow would have been simpler, with one less integration point to manage and monitor. The trade-off is really about scope: ADF earns its place when true cross-system orchestration is needed, which was the case in my project."
 
 ---
@@ -97,11 +123,15 @@
 ### L1
 
 **85. In a typical pipeline, what does ADF do and what does Databricks do — where's the line between orchestration and transformation?**
+
 **Short:** ADF handles **orchestration** — scheduling, connecting to source systems, moving raw data, sequencing steps, monitoring, and error handling. Databricks handles **transformation** — the actual cleansing, business logic, deduplication, and heavy compute work on the data once it's landed.
+
 **Detailed:** "This division is exactly how I structured my FinOps Dataverse pipelines. ADF's job was to connect to Oracle and flat-file sources, move raw data into ADLS Gen2 (Bronze layer), and then trigger and monitor the next step. Databricks' job was everything after that — my PySpark notebooks handled data cleansing, transformation, deduplication, and business rule implementation, turning that raw Bronze data into curated Silver/Gold datasets. Keeping this separation clean mattered: ADF isn't well-suited for complex, code-heavy transformation logic, and Databricks isn't meant to be a scheduling/connectivity orchestrator across many different source systems — each tool does what it's actually good at."
 
 **86. Why would a project use both ADF and Databricks instead of just one of them?**
+
 **Short:** ADF excels at connectivity (native connectors to many source systems) and orchestration/scheduling/monitoring across a multi-step, multi-system pipeline. Databricks excels at large-scale, code-driven transformation with Spark's distributed compute and Delta Lake's reliability features. Using both plays to each tool's strengths rather than forcing one tool to do a job it's not built for.
+
 **Detailed:** "In my project, this wasn't a theoretical choice — it's how we actually built FinOps Dataverse. We needed ADF's broad connectivity to reliably pull from Oracle and flat-file sources on a schedule, with built-in monitoring and retry handling. But the actual transformation work — cleansing, deduplication, complex business rules across large financial datasets — needed real compute power and code flexibility that ADF's Data Flows alone wouldn't have given us as efficiently as PySpark in Databricks. Using just ADF would mean either weaker transformation capabilities or fighting the tool to do complex logic it's not designed for; using just Databricks would mean losing ADF's strong native connectivity and centralized pipeline monitoring across many different source systems."
 
 ---
@@ -109,19 +139,27 @@
 ### L2
 
 **87. Design an end-to-end pipeline: ADF ingestion from Oracle → Bronze in ADLS → Databricks transforms to Silver/Gold in Delta Lake → ADF triggers and monitors the Databricks job. Walk through parameter passing and success/failure detection.**
+
 **Short:** ADF's Copy Activity lands raw Oracle data into ADLS Gen2 (Bronze). ADF then uses a **Databricks Notebook Activity** to trigger the transformation notebook, passing parameters (like the file path or load date) via **base parameters**. ADF knows the notebook succeeded or failed based on the **Job run status** returned by Databricks — if the notebook throws an exception or fails, the ADF activity shows a failed status, which can trigger retry logic or an "On Failure" path.
+
 **Detailed:** "This is essentially the architecture I built for FinOps Dataverse. Step by step: ADF's Copy Activity connects to Oracle (via the Oracle Linked Service) and lands raw data as files in ADLS Gen2's Bronze layer. Next, a Databricks Notebook Activity in the same ADF pipeline triggers my PySpark notebook, passing parameters — like the Bronze file path or the current run's watermark/load date — through the activity's base parameters, which the notebook reads via `dbutils.widgets.get()`. The notebook then reads Bronze data, applies cleansing, deduplication, and business rules, and writes curated output into Silver/Gold Delta tables using MERGE INTO for incremental updates. ADF knows whether this succeeded because the Databricks Notebook Activity waits for the job run to complete and surfaces its final status (succeeded/failed) back into the ADF pipeline — a failure there is visible in ADF's Monitor tab just like any other activity failure, and I'd configure retry policies or an On Failure alerting path on that specific activity, the same way I handled monitoring and resolving failures across the rest of the pipeline."
 
 **88. How do you pass a dynamic parameter (like a watermark date) from ADF into a Databricks notebook, and get a return value back into ADF?**
+
 **Short:** Pass parameters into the notebook via the Databricks Notebook Activity's **Base Parameters** field (which the notebook reads using `dbutils.widgets.get("param_name")`). To return a value back to ADF, the notebook calls `dbutils.notebook.exit("some_value")` at the end, and ADF can capture that return value using the activity's output (`@activity('Notebook Activity Name').output.runOutput`).
+
 **Detailed:** "This is directly how I implemented incremental loading across ADF and Databricks — the watermark value (last processed date/timestamp) needed to flow from ADF into the notebook so it knew which records to process, which was central to reducing our pipeline execution time by 30%. In practice: ADF would look up the current watermark (via a Lookup activity reading a tracking table), pass it into the Databricks Notebook Activity's base parameters, the notebook would read it with `dbutils.widgets.get()` and use it to filter the incremental load. After processing, the notebook could call `dbutils.notebook.exit()` with the new max watermark value it computed, and a subsequent ADF Stored Procedure activity could read that via the notebook activity's output and write it back into the watermark tracking table — closing the loop for the next run."
 
 **89. If a Databricks job in the middle of an ADF pipeline fails, how does that failure propagate back to ADF, and how do you retry just that step?**
+
 **Short:** The Databricks Notebook Activity in ADF waits synchronously for the job to finish; if the notebook throws an unhandled exception or the job run status comes back as failed, ADF marks that activity as failed, which stops downstream activities unless an "On Failure" path is defined. To retry just that step, you configure a **retry count and interval directly on the Notebook Activity** (in its policy settings), so ADF automatically re-attempts just that activity without re-running the whole pipeline from scratch.
+
 **Detailed:** "This matters a lot for reliability — in my role, I was responsible for monitoring, scheduling, and optimizing pipelines and resolving failures, and a full pipeline re-run for a failure in just one step would be wasteful, especially with large datasets. In practice: the Databricks Notebook Activity has its own retry policy setting (retry count + interval between retries) directly configurable on the activity itself — so a transient failure (like a brief resource contention issue on the cluster) gets automatically retried just for that activity, without re-running the earlier Copy Activities that already succeeded and landed data in Bronze. If the failure isn't transient — say, a genuine data quality or code issue — I'd want that surfaced through monitoring/alerting rather than silently retried indefinitely, which is why I'd keep retry counts modest and pair them with proper alerting for anything that exhausts its retries."
 
 **90. In a metadata-driven framework spanning both tools, where does the "control table" logically live — ADF (Stored Procedure activity) or Databricks (Delta table)? Pros/cons of each?**
+
 **Short:** Both are valid. A control table in a relational store (like **Azure SQL**, updated via ADF Stored Procedure activity) is easy for ADF's Lookup/ForEach activities to query directly and is simple to manage with standard SQL tooling. A control table as a **Delta table in Databricks** keeps everything in the same lakehouse ecosystem, benefits from ACID/versioning, and is easier for Databricks jobs to update directly — but ADF needs an extra step (like a notebook call) to read/write it instead of a native Lookup.
+
 **Detailed:** "In FinOps Dataverse, our configuration-driven framework aligns more with the Azure SQL-based control table approach — ADF's Lookup activity could directly query a SQL-based config table listing source metadata, and a Stored Procedure activity could update status/watermark values after each run, all using native ADF activities without needing to call into Databricks just to read config. The advantage here is simplicity: ADF orchestration logic (Lookup, ForEach, Stored Procedure) works natively and efficiently against a relational control table. The alternative — a Delta table-based control table in Databricks — would make more sense if the control/config logic itself needed complex processing better suited to Spark, or if the team wanted everything (data and metadata) unified within the lakehouse rather than split across Azure SQL and ADLS. Given that ADF was already our orchestration layer and Azure SQL was already part of our stack for curated/reporting data, keeping the control table there was the simpler, more natural choice for how we built it."
 
 ---
