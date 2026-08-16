@@ -117,7 +117,9 @@
 ### L2
 
 **53. How does Delta Lake achieve ACID transactions on top of cloud object storage (which doesn't natively support transactions)?**
+
 **Short (cert/conceptual):** Delta achieves this through the transaction log (`_delta_log`) combined with optimistic concurrency control — every write creates new immutable Parquet files, and a new log entry atomically "commits" which files are now part of the table, using atomic file-write guarantees provided by the cloud storage layer (or a coordination service) to prevent two conflicting commits from both succeeding.
+
 **Detailed:** "This is more of a deep internals answer grounded in my certification study than something I engineered myself, but I can explain the mechanism clearly: since object storage like ADLS or S3 doesn't have native transactions, Delta never modifies existing files — it writes new Parquet files and then atomically appends a new entry to the `_delta_log` that says 'the table now consists of these files.' Readers always see a consistent snapshot because they only read files referenced by a committed log entry. If two writers try to commit at the same time, Delta uses optimistic concurrency control — the second writer detects the conflict and either retries or fails, rather than corrupting the table. Understanding this gave me confidence that our MERGE-based incremental loads in FinOps Dataverse wouldn't leave the table in an inconsistent state even if a job occasionally failed mid-run."
 
 -------------------------------------
@@ -141,6 +143,8 @@
 **56. Schema evolution vs. schema enforcement — how do you allow a new column via mergeSchema?**
 
 **Short:** Schema enforcement is Delta's default behavior of rejecting writes that don't match the existing table schema (protecting data quality). Schema evolution lets you intentionally allow schema changes — like a new column — by explicitly opting in with `.option("mergeSchema", "true")` on a write, or `spark.databricks.delta.schema.autoMerge.enabled` at the session/cluster level.
+
+Spark writes data by matching columns by name, not by position.
 
 **Detailed:** "Schema enforcement was actually valuable in my work — during ingestion from Oracle and flat-file sources, having Delta reject a write that didn't match the expected schema caught upstream data quality issues early, before bad data made it into the Silver/Gold layers. When a source genuinely added a new column and we wanted to accept it, I'd use `mergeSchema=true` on that specific write — this was a deliberate, explicit choice rather than something enabled globally, since I didn't want unexpected schema changes silently passing through without visibility, given the regulated, finance-data context I was working in."
 
