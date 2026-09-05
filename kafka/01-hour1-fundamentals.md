@@ -130,6 +130,7 @@ Interview one-liner: *"RabbitMQ is a queue — a message goes to one consumer an
 
 **Offset**
 - *What:* a monotonically increasing integer identifying a record's position within a partition.
+- *Monotonically increasing* means a value never decreases as you move through the data. It can stay the same or increase.
 - *Why:* lets a consumer say "I've processed up to here" and resume exactly from there — this is Kafka's replay/fault-tolerance mechanism.
 - *How:* consumer commits offsets (auto or manual) to a special internal topic (`__consumer_offsets`).
 - *Example:* consumer crashes after committing offset 1045; on restart it resumes from 1046.
