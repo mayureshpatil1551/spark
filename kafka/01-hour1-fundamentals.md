@@ -126,6 +126,7 @@ Interview one-liner: *"RabbitMQ is a queue — a message goes to one consumer an
 - *How:* Kafka assigns partitions across the group's live consumers; if a consumer dies, its partitions are reassigned (rebalance).
 - *Example:* `inventory-service` group with 3 consumers, each owning one of 3 partitions.
 - *Interview Q:* "If two different consumer groups read the same topic, does each group get all the messages independently?" → Yes — offsets are tracked *per group*, so each group reads the full stream independently (this is what makes Kafka pub-sub, not just a queue).
+- Kafka pub-sub --> In Kafka, producers publish messages to a topic, and consumers subscribe to that topic.
 
 **Offset**
 - *What:* a monotonically increasing integer identifying a record's position within a partition.
