@@ -30,9 +30,7 @@ The stream resumes using its checkpoint, provided the checkpoint remains availab
 ❓ 4. Does Auto Loader guarantee exactly-once processing?
 Auto Loader supports exactly-once file processing when used with Delta Lake, but end-to-end guarantees depend on the complete pipeline, including transformations and the sink.
 
----
 
-s
 🎯 Key Interview Takeaway:
 Auto Loader provides scalable, incremental file ingestion with schema evolution and checkpoint-based recovery. Understanding file discovery, schema management, checkpointing, and fault tolerance is essential for building reliable data pipelines.
 
