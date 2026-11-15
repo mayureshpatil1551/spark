@@ -43,7 +43,7 @@ Auto Loader provides scalable, incremental file ingestion with schema evolution 
 
 ---
 
-🚀 Databricks Interview Series | Day 2: Unity Catalog
+## 🚀 Databricks Interview Series | Day 2: Unity Catalog
 
 🎯 Topic: Unity Catalog in Databricks
 
@@ -97,7 +97,7 @@ Dropping the table removes its metadata registration but generally leaves the un
 
 ---
 
-🚀 Databricks Interview Preparation - Day 3
+## 🚀 Databricks Interview Preparation - Day 3
 
 How would you optimize a large Delta table that is frequently queried by date and customer ID?
 
@@ -185,7 +185,7 @@ Databricks|Snowflake |DBT| Microsoft Fabric |ResponsibleAI|AgenticAI|GenAI|LLM|R
 
 Follow
 
-🚀 Databricks Interview Series | Day 2: Unity Catalog
+## 🚀 Databricks Interview Series | Day 2: Unity Catalog
 
 🎯 Topic: Unity Catalog in Databricks
 
@@ -241,7 +241,7 @@ Dropping the table removes its metadata registration but generally leaves the un
 ----
 
 
-🚀 Databricks Interview Preparation series : Day 4
+## 🚀 Databricks Interview Preparation series : Day 4
 
 Q. How does Lakeflow Declarative Pipelines handle incremental data processing?
 
@@ -292,7 +292,7 @@ A simple way to remember:
 
 ---
 
-🚀 Databricks Interview Preparation Series- Day 5
+## 🚀 Databricks Interview Preparation Series- Day 5
 
 CDC vs. CDF vs. SCD vs. Time Travel
 These four concepts are commonly discussed in Databricks and Delta Lake interviews. Although they are related to data changes and history, each serves a different purpose.
