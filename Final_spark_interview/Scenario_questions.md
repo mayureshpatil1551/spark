@@ -15,13 +15,21 @@ I would use Databricks Auto Loader (cloudFiles) to incrementally ingest files ar
 Auto Loader automatically discovers new files, supports schema inference and evolution, and scales to handle large volumes of data efficiently.
 
 🔹 Implementation Steps:
+
 ✅ Configure secure access to ADLS Gen2 using Unity Catalog storage credentials or managed identity.
+
 ✅ Configure Auto Loader using the cloudFiles format.
+
 ✅ Define the source path and schema location.
+
 ✅ Configure schema evolution to handle new columns.
+
 ✅ Transform the incoming data as required.
+
 ✅ Write the ingested data into a Delta table.
+
 ✅ Configure a checkpoint location to track streaming progress and support recovery.
+
 ✅ Run the pipeline continuously or schedule it using Lakeflow Jobs, depending on latency requirements.
 
 🔥 Important Follow-Up Questions
@@ -48,6 +56,7 @@ Auto Loader provides scalable, incremental file ingestion with schema evolution 
 🎯 Topic: Unity Catalog in Databricks
 
 💡 Main Interview Question: What is Unity Catalog in Databricks, and why do we use it?
+
 ✅ Answer:
 Unity Catalog is Databricks' unified governance solution that helps organizations manage and secure data and AI assets across their Databricks environment.
 
@@ -70,6 +79,7 @@ This helps enforce security while enabling teams to work with the data they need
 🔥 4 Follow-Up Interview Questions and Answers
 
 Q1. What is the three-level namespace in Unity Catalog?
+
 ✅ Answer:
 Unity Catalog organizes data using a three-level namespace:
 catalog.schema.table
@@ -79,12 +89,14 @@ production.sales.orders
 This structure helps organize data assets logically and manage permissions at different levels.
 
 Q2. What is the difference between Unity Catalog and the Hive metastore?
+
 ✅ Answer:
 The Hive metastore is a traditional metadata management service used to organize tables and their metadata.
 Unity Catalog provides a more comprehensive governance framework, including centralized access control, data discovery, lineage, auditing, and governance across supported workspaces.
 Unity Catalog is generally preferred for modern Databricks environments that require centralized governance.
 
 Q3. What is the difference between a managed table and an external table in Unity Catalog?
+
 ✅ Answer:
 Managed Table:
 Databricks manages the table's data lifecycle.
@@ -190,6 +202,7 @@ Follow
 🎯 Topic: Unity Catalog in Databricks
 
 💡 Main Interview Question: What is Unity Catalog in Databricks, and why do we use it?
+
 ✅ Answer:
 Unity Catalog is Databricks' unified governance solution that helps organizations manage and secure data and AI assets across their Databricks environment.
 
@@ -212,6 +225,7 @@ This helps enforce security while enabling teams to work with the data they need
 🔥 4 Follow-Up Interview Questions and Answers
 
 Q1. What is the three-level namespace in Unity Catalog?
+
 ✅ Answer:
 Unity Catalog organizes data using a three-level namespace:
 catalog.schema.table
@@ -221,12 +235,14 @@ production.sales.orders
 This structure helps organize data assets logically and manage permissions at different levels.
 
 Q2. What is the difference between Unity Catalog and the Hive metastore?
+
 ✅ Answer:
 The Hive metastore is a traditional metadata management service used to organize tables and their metadata.
 Unity Catalog provides a more comprehensive governance framework, including centralized access control, data discovery, lineage, auditing, and governance across supported workspaces.
 Unity Catalog is generally preferred for modern Databricks environments that require centralized governance.
 
 Q3. What is the difference between a managed table and an external table in Unity Catalog?
+
 ✅ Answer:
 Managed Table:
 Databricks manages the table's data lifecycle.
@@ -406,11 +422,17 @@ DABs help bring software engineering best practices into Databricks by enabling 
 
 🔹 Key Benefits of Databricks Asset Bundles:
 
+
 ✅ Infrastructure and configurations defined as code
+
 ✅ Consistent deployments across multiple environments
+
 ✅ Seamless CI/CD integration with GitHub Actions, Azure DevOps, and other CI/CD platforms
+
 ✅ Version control and collaboration through Git
+
 ✅ Parameterized configurations for Dev, QA, and Prod
+
 ✅ Automated deployment of jobs, pipelines, notebooks, and other Databricks resources
 
 💡 Why does this matter?
