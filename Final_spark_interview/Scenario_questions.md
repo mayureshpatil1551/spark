@@ -176,26 +176,7 @@ Delta table optimization is not just about increasing cluster size. It is about 
 
 The best optimization strategy should always be driven by actual query patterns and execution-plan analysis.
 
-#Databricks #DeltaLake #ApacheSpark #DataEngineering #PySpark #BigData #SQL #InterviewPreparation
-
-
-24
-
-
-
-2
-Feed post
-View Shirisha Siliveri’s profile, open to work
-Shirisha Siliveri
-
- • 3rd+
-
-Databricks|Snowflake |DBT| Microsoft Fabric |ResponsibleAI|AgenticAI|GenAI|LLM|RAG| MLWorkflows|AWS|Azure|GCP|Python |SQL | BigData|Healthcare|Retail|FinancialServices
-
-2w
-
-
-Follow
+-----
 
 ## 🚀 Databricks Interview Series | Day 2: Unity Catalog
 
