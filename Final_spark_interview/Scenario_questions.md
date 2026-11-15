@@ -56,7 +56,22 @@ Auto Loader provides scalable, incremental file ingestion with schema evolution 
 
 💬 Interview Tip: Don't just memorize the code. Be prepared to explain why you chose Auto Loader, how it handles schema changes, and how you recover from failures.
 
+df = (spark.readStream
+    .format("cloudFiles")
+    .option("cloudFiles.format", "json")
+    .option("cloudFiles.schemaLocation", schema_path)
+    .option("cloudFiles.schemaEvolutionMode", "addNewColumns")
+    .load(source_path)
+    .withColumn("ingestion_timestamp", current_timestamp()))
 
+(df.writeStream
+    .format("delta")
+    .outputMode("append")
+    .option("checkpointLocation", checkpoint_path)
+    .trigger(processingTime="1 minute")
+    .toTable("bronze.orders"))
+
+    
 ---
 
 ## 🚀 Databricks Interview Series | Day 2: Unity Catalog
