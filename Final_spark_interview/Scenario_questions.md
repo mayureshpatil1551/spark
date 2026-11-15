@@ -33,13 +33,21 @@ Auto Loader automatically discovers new files, supports schema inference and evo
 ✅ Run the pipeline continuously or schedule it using Lakeflow Jobs, depending on latency requirements.
 
 🔥 Important Follow-Up Questions
+
 ❓ 1. How does Auto Loader discover new files?
+
 Auto Loader supports directory listing and file notification modes. File notification mode can reduce directory-listing overhead at scale.
+
 ❓ 2. How do you prevent duplicate ingestion?
+
 Auto Loader tracks discovered files using checkpoint state. Preserve the checkpoint across restarts and deployments to avoid reprocessing previously tracked files.
+
 ❓ 3. What happens when the stream restarts?
+
 The stream resumes using its checkpoint, provided the checkpoint remains available and intact and the required source data is still accessible.
+
 ❓ 4. Does Auto Loader guarantee exactly-once processing?
+
 Auto Loader supports exactly-once file processing when used with Delta Lake, but end-to-end guarantees depend on the complete pipeline, including transformations and the sink.
 
 
@@ -176,7 +184,26 @@ Delta table optimization is not just about increasing cluster size. It is about 
 
 The best optimization strategy should always be driven by actual query patterns and execution-plan analysis.
 
------
+#Databricks #DeltaLake #ApacheSpark #DataEngineering #PySpark #BigData #SQL #InterviewPreparation
+
+
+24
+
+
+
+2
+Feed post
+View Shirisha Siliveri’s profile, open to work
+Shirisha Siliveri
+
+ • 3rd+
+
+Databricks|Snowflake |DBT| Microsoft Fabric |ResponsibleAI|AgenticAI|GenAI|LLM|RAG| MLWorkflows|AWS|Azure|GCP|Python |SQL | BigData|Healthcare|Retail|FinancialServices
+
+2w
+
+
+Follow
 
 ## 🚀 Databricks Interview Series | Day 2: Unity Catalog
 
